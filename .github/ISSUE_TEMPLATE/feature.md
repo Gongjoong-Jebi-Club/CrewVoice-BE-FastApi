@@ -3,7 +3,8 @@ name: Feature
 about: 최소 기능 단위 개발
 title: "[ Feat ] [ backend ]"
 labels: feature
-assignees: ""
+assignees: ''
+
 ---
 
 # ✨Feature Issue
