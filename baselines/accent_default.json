@@ -1,0 +1,5 @@
+{
+  "baseline_name": "default",
+  "sample_count": 3,
+  "note": "Accent analyzer currently uses dynamic analysis without baseline"
+}

@@ -36,7 +36,7 @@ CrewVoice-BE-FastApi/
   }
   ```
 
-#### 2. 음성 평가 API
+#### 2. 음성 평가 API (Mock)
 - **URL**: `POST /api/v1/evaluate`
 - **Content-Type**: `multipart/form-data`
 - **Request Parameters**:
@@ -52,6 +52,58 @@ CrewVoice-BE-FastApi/
     "speed_wpm": 140.0,
     "feedback_summary": "[Mock] FastAPI 서버 연동 테스트 성공",
     "error_words": ["test", "mock"]
+  }
+  ```
+
+#### 3. ASR 음성 분석 API ⭐ NEW
+- **URL**: `POST /api/v1/asr/analyze`
+- **Content-Type**: `multipart/form-data`
+- **설명**: WAV 파일을 업로드하여 6가지 항목 종합 분석 (각 100점 만점)
+- **Request Parameters**:
+  - `file`: WAV 음성 파일 (필수)
+  - `reference_text`: 참조 텍스트 (선택)
+  - `language_code`: 언어 코드 (기본값: `ko-KR`)
+  - `gender`: 성별 (기본값: `F`)
+
+- **분석 항목** (각 100점 만점):
+  | 항목 | 설명 |
+  |------|------|
+  | Pronunciation | 발음 정확도, 유창성, 완전성 |
+  | Accent | 단어별 강조 표현 |
+  | Intonation | 억양 패턴 및 리듬 |
+  | Pause | 쉼의 위치 및 길이 |
+  | Speed | 발화 속도 |
+  | Tone | 음색 및 톤 품질 |
+
+- **Response 예시**:
+  ```json
+  {
+    "overall_score": 85.5,
+    "max_score": 100,
+    "scores": {
+      "pronunciation": {"score": 88.0, "feedback": [...], "status": "success"},
+      "accent": {"score": 82.0, "feedback": [...], "status": "success"},
+      "intonation": {"score": 85.0, "feedback": [...], "status": "success"},
+      "pause": {"score": 90.0, "feedback": [...], "status": "success"},
+      "speed": {"score": 87.0, "feedback": [...], "status": "success"},
+      "tone": {"score": 81.0, "feedback": [...], "status": "success"}
+    },
+    "detailed_results": { /* 상세 분석 데이터 */ },
+    "analysis_summary": "전체 점수: 85.50/100 | ..."
+  }
+  ```
+
+**📖 상세 문서**: [ASR_API_GUIDE.md](ASR_API_GUIDE.md) 참고
+
+#### 4. ASR Health Check
+- **URL**: `GET /api/v1/asr/health`
+- **설명**: ASR 분석 모듈 상태 확인
+- **응답 예시**:
+  ```json
+  {
+    "status": "ok",
+    "module": "asr_analysis",
+    "agents": ["pronunciation", "accent", "intonation", "pause", "speed", "tone"]
   }
   ```
 
@@ -93,6 +145,36 @@ source .venv/bin/activate  # Windows: .venv\Scripts\activate
 # 의존성 설치 (pyproject.toml에서 자동 읽음)
 uv sync
 ```
+
+### 3. 환경 변수 설정 (Azure Speech API 사용 시)
+
+**ASR 음성 분석 기능을 사용하려면 Azure Speech API 키가 필요합니다.**
+
+```bash
+# .env.example을 복사하여 .env 파일 생성
+cp .env.example .env
+```
+
+`.env` 파일을 열고 Azure 키를 입력하세요:
+
+```bash
+# .env
+SPEECH_KEY=your_actual_azure_speech_key
+SPEECH_REGION=koreacentral  # 또는 your_region
+```
+
+#### Azure Speech API 키 발급 방법
+
+1. [Azure Portal](https://portal.azure.com) 접속
+2. "리소스 만들기" > "Speech" 검색
+3. Speech Service 리소스 생성
+4. 리소스 > "키 및 엔드포인트" 메뉴에서 확인:
+   - **KEY 1 또는 KEY 2** → `SPEECH_KEY`
+   - **위치/지역** (예: koreacentral) → `SPEECH_REGION`
+
+**⚠️ 주의사항:**
+- Azure 키가 없으면 **Pronunciation(발음) 분석만 실패**하고, 나머지 5개 분석은 정상 작동합니다.
+- `.env` 파일은 `.gitignore`에 포함되어 있어 Git에 커밋되지 않습니다.
 
 ## 실행 방법
 

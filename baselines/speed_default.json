@@ -1,0 +1,22 @@
+{
+  "baseline_name": "default",
+  "sample_count": 3,
+  "statistics": {
+    "mean": 4.623660300331317,
+    "std": 0.23376912635403732,
+    "median": 4.71038818359375,
+    "min": 4.304016224862888,
+    "max": 4.856576492537314
+  },
+  "thresholds": {
+    "optimal_min": 4.39,
+    "optimal_max": 4.86,
+    "slow_threshold": 4.27,
+    "fast_threshold": 4.97
+  },
+  "raw_rates": [
+    4.71038818359375,
+    4.856576492537314,
+    4.304016224862888
+  ]
+}

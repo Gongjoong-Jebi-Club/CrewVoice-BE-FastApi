@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from app.apis.v1 import router_evaluate
+from app.apis.v1 import router_evaluate, router_asr, router_baseline
 from fastapi.middleware.cors import CORSMiddleware  # 1. CORS 미들웨어 임포트
 
 app = FastAPI(title="CrewVoice Evaluation API (Python)")
@@ -31,7 +31,21 @@ async def health_check():
 
 # Spring Boot가 호출할 메인 API 라우터
 app.include_router(
-    router_evaluate.router, 
+    router_evaluate.router,
     prefix="/api/v1",  # /api/v1/evaluate 주소로 API 등록
     tags=["Evaluation"]
+)
+
+# ASR 분석 API 라우터
+app.include_router(
+    router_asr.router,
+    prefix="/api/v1/asr",  # /api/v1/asr/analyze 주소로 API 등록
+    tags=["ASR Analysis"]
+)
+
+# Baseline 관리 API 라우터
+app.include_router(
+    router_baseline.router,
+    prefix="/api/v1/baseline",  # /api/v1/baseline/generate 주소로 API 등록
+    tags=["Baseline Management"]
 )
