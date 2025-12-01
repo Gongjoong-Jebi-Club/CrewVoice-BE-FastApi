@@ -291,10 +291,151 @@ class BaselineManager:
 
         return baseline
 
+    def generate_speed_baseline_from_samples(
+        self,
+        sample_dir: Path | None = None,
+        output_filename: str = "speed_default.json",
+    ) -> Dict[str, Any]:
+        """
+        speed 에이전트용 baseline(speed_default.json)을 생성한다.
+
+        - sample_dir 아래의 wav/mp3 파일을 전부 스캔
+        - 각 파일의 발화 속도 계산
+        - 평균, 표준편차 등 통계 계산
+        - speed.py에서 사용하는 스키마로 JSON 저장
+        """
+        import librosa
+        import parselmouth
+        from scipy.signal import find_peaks
+
+        # 1) 샘플 디렉토리 결정
+        if sample_dir is None:
+            sample_dir = self.sample_dir
+
+        if not sample_dir.exists():
+            self.logger.error(f"speed 샘플 디렉토리를 찾을 수 없습니다: {sample_dir}")
+            return {}
+
+        # 2) 오디오 파일 수집
+        wav_files = list(sample_dir.rglob("*.wav"))
+        mp3_files = list(sample_dir.rglob("*.mp3"))
+        audio_files = wav_files + mp3_files
+
+        if not audio_files:
+            self.logger.error(f"speed 샘플 오디오 파일이 없습니다: {sample_dir}")
+            return {}
+
+        self.logger.info(f"speed: {len(audio_files)}개 샘플 파일에서 baseline 생성 시작")
+
+        # 3) 각 파일의 속도 계산
+        rates = []
+        for audio_path in audio_files:
+            try:
+                # 음절 검출 (Parselmouth)
+                sound = parselmouth.Sound(str(audio_path))
+                intensity = sound.to_intensity()
+
+                intensity_values = []
+                time_step = intensity.time_step
+                start_time = intensity.xmin
+                num_frames = intensity.nx
+
+                for i in range(num_frames):
+                    time = start_time + i * time_step
+                    value = intensity.get_value(time)
+                    if value is not None and not np.isnan(value):
+                        intensity_values.append(value)
+                    else:
+                        intensity_values.append(0)
+
+                intensity_array = np.array(intensity_values)
+                min_distance_samples = int(0.1 / time_step)
+
+                peaks, _ = find_peaks(
+                    intensity_array,
+                    distance=max(1, min_distance_samples),
+                    prominence=2,
+                    height=50
+                )
+                total_syllables = len(peaks)
+
+                # 음성 구간 검출 (librosa)
+                y, sr = librosa.load(str(audio_path), sr=None)
+                intervals = librosa.effects.split(y, top_db=40, frame_length=2048, hop_length=512)
+
+                time_intervals = []
+                for start_sample, end_sample in intervals:
+                    start_t = start_sample / sr
+                    end_t = end_sample / sr
+                    duration = end_t - start_t
+                    if duration >= 0.1:
+                        time_intervals.append((start_t, end_t))
+
+                # 가까운 구간 병합
+                merged_intervals = []
+                for start, end in time_intervals:
+                    if merged_intervals and start - merged_intervals[-1][1] < 0.5:
+                        merged_intervals[-1] = (merged_intervals[-1][0], end)
+                    else:
+                        merged_intervals.append((start, end))
+
+                if not merged_intervals:
+                    total_duration = len(y) / sr
+                    if total_duration > 0.5:
+                        merged_intervals = [(0.0, total_duration)]
+
+                # 발화 시간 계산
+                total_speech_duration = sum([end - start for start, end in merged_intervals])
+
+                # 속도 계산
+                if total_speech_duration > 0:
+                    rate = total_syllables / total_speech_duration
+                    rates.append(rate)
+                    self.logger.info(f"  {audio_path.name}: {rate:.2f} 음절/초")
+
+            except Exception as e:
+                self.logger.error(f"[speed] 샘플 처리 중 오류 ({audio_path}): {e}")
+
+        if not rates:
+            self.logger.error("speed baseline: 분석 가능한 파일이 없습니다.")
+            return {}
+
+        # 4) 통계 계산
+        mean_rate = float(np.mean(rates))
+        std_rate = float(np.std(rates))
+
+        baseline: Dict[str, Any] = {
+            "agent": "speed",
+            "created_at": datetime.now().isoformat(),
+            "statistics": {
+                "mean_rate": mean_rate,
+                "std_rate": std_rate,
+                "optimal_min": round(mean_rate - std_rate, 2),
+                "optimal_max": round(mean_rate + std_rate, 2),
+                "slow_threshold": round(mean_rate - 1.5 * std_rate, 2),
+                "fast_threshold": round(mean_rate + 1.5 * std_rate, 2),
+            },
+            "sample_count": len(rates),
+            "sample_rates": [round(r, 2) for r in rates],
+        }
+
+        # 5) 파일로 저장
+        output_path = self.baseline_dir / output_filename
+
+        try:
+            converted = self._convert_to_python_types(baseline)
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(converted, f, ensure_ascii=False, indent=2)
+            self.logger.info(f"✅ speed baseline 생성 완료: {output_path}")
+        except Exception as e:
+            self.logger.error(f"❌ speed baseline 저장 실패: {e}")
+
+        return baseline
+
 
     def generate_all_baselines_from_samples(self):
         """
-        샘플 음성으로부터 baseline 생성 (Intonation, Tone만 해당)
+        샘플 음성으로부터 baseline 생성 (Intonation, Tone, Speed)
         """
         from app.agents.analyzers.intonation import IntonationAnalyzer
 
@@ -346,6 +487,21 @@ class BaselineManager:
         except Exception as e:
             self.logger.error(f"Tone baseline 생성 중 오류: {str(e)}")
 
+        # Speed baseline 생성
+        self.logger.info(f"\n{'='*80}")
+        self.logger.info("SPEED Baseline 생성 중...")
+        self.logger.info(f"{'='*80}")
+
+        try:
+            self.generate_speed_baseline_from_samples(
+                sample_dir=self.sample_dir,
+                output_filename="speed_default.json",
+            )
+            self.logger.info("✅ Speed baseline 생성 완료")
+
+        except Exception as e:
+            self.logger.error(f"Speed baseline 생성 중 오류: {str(e)}")
+
 
 if __name__ == "__main__":
     # Baseline 관리자 테스트
@@ -356,8 +512,12 @@ if __name__ == "__main__":
     files = manager.find_sample_audio_files()
     print(f"총 {len(files)}개 파일")
 
+    # 모든 Baseline 생성
+    print("\n=== 모든 Baseline 생성 ===")
+    manager.generate_all_baselines_from_samples()
+
     # Baseline 목록 조회
-    print("\n=== 저장된 Baseline ===")
+    print("\n=== 생성된 Baseline ===")
     baselines = manager.list_baselines()
     for bl in baselines:
         print(f"- {bl['file']}: {bl['agent']} ({bl['created_at']})")

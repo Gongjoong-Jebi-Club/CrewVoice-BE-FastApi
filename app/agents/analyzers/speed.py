@@ -2,15 +2,13 @@
 Speed Analysis Agent
 음성 파일의 속도(Speed) 분석을 수행하는 에이전트
 
-현재 버전은 여기서 baseline을 매번 계산합니다. 추후 변경이 필요합니다.
-(우석이가 할게얌~)
+Baseline을 파일(speed_default.json)에서 로드하여 사용합니다.
 """
-import sys
 import json
 import parselmouth
 import librosa
 import numpy as np
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 from pathlib import Path
 from scipy.signal import find_peaks
 
@@ -19,69 +17,38 @@ from scipy.signal import find_peaks
 # parent.parent is app/agents
 BASE_DIR = Path(__file__).parent.parent
 
+# speed baseline JSON 기본 경로
+DEFAULT_SPEED_BASELINE_PATH = BASE_DIR / "baselines" / "speed_default.json"
+
 class SpeedAnalyzer:
     """속도(Speed) 분석기"""
 
-    def __init__(self):
-        """sample 폴더의 음성 파일들로부터 baseline 계산"""
-        self._calculate_baseline_from_samples()
+    def __init__(self, baseline_path: Path = DEFAULT_SPEED_BASELINE_PATH):
+        """
+        Args:
+            baseline_path: Baseline JSON 파일 경로
+        """
+        self.baseline_path = baseline_path
+        self._baseline: Optional[Dict] = None
+        self._load_baseline()
 
-    def _calculate_baseline_from_samples(self):
-        """sample 폴더의 음성 파일들로부터 baseline 속도 계산"""
-        sample_dir = BASE_DIR / "sample"
+    def _load_baseline(self):
+        """Baseline JSON 파일 로드"""
+        if not self.baseline_path.exists():
+            raise FileNotFoundError(
+                f"Speed baseline 파일을 찾을 수 없습니다: {self.baseline_path}\n"
+                f"BaselineManager를 사용하여 먼저 baseline을 생성하세요."
+            )
 
-        if not sample_dir.exists():
-            raise FileNotFoundError(f"sample 디렉토리가 존재하지 않습니다: {sample_dir}")
+        with open(self.baseline_path, 'r', encoding='utf-8') as f:
+            self._baseline = json.load(f)
 
-        # sample 폴더의 모든 wav 파일 수집
-        wav_files = list(sample_dir.glob("*.wav"))
-
-        if not wav_files:
-            raise FileNotFoundError(f"sample 폴더에 wav 파일이 없습니다: {sample_dir}")
-
-        print(f"Calculating baseline from {len(wav_files)} sample files...")
-
-        # 각 파일의 속도 계산
-        rates = []
-        for wav_file in wav_files:
-            try:
-                # 음절 검출
-                total_syllables, _ = self.detect_syllables_parselmouth(str(wav_file))
-
-                # 음성 구간 검출
-                speech_intervals = self.detect_speech_segments(str(wav_file))
-
-                # 발화 시간 계산
-                total_speech_duration = sum([end - start for start, end in speech_intervals])
-
-                # 속도 계산
-                if total_speech_duration > 0:
-                    rate = total_syllables / total_speech_duration
-                    rates.append(rate)
-                    print(f"  {wav_file.name}: {rate:.2f} 음절/초")
-            except Exception as e:
-                print(f"  Warning: {wav_file.name} 분석 실패 - {e}")
-                continue
-
-        if not rates:
-            raise ValueError("분석 가능한 파일이 없습니다.")
-
-        # 통계 계산
-        mean_rate = np.mean(rates)
-        std_rate = np.std(rates)
-
-        # Baseline 설정 (평균 ± 표준편차)
-        self.OPTIMAL_MIN = round(mean_rate - std_rate, 2)
-        self.OPTIMAL_MAX = round(mean_rate + std_rate, 2)
-        self.SLOW_THRESHOLD = round(mean_rate - 1.5 * std_rate, 2)
-        self.FAST_THRESHOLD = round(mean_rate + 1.5 * std_rate, 2)
-
-        print(f"\n✓ Baseline 계산 완료:")
-        print(f"  평균 속도: {mean_rate:.2f} 음절/초")
-        print(f"  표준편차: {std_rate:.2f}")
-        print(f"  최적 범위: {self.OPTIMAL_MIN} - {self.OPTIMAL_MAX} 음절/초")
-        print(f"  느림 기준: < {self.SLOW_THRESHOLD} 음절/초")
-        print(f"  빠름 기준: > {self.FAST_THRESHOLD} 음절/초\n")
+        # Baseline 통계 추출
+        stats = self._baseline["statistics"]
+        self.OPTIMAL_MIN = stats["optimal_min"]
+        self.OPTIMAL_MAX = stats["optimal_max"]
+        self.SLOW_THRESHOLD = stats["slow_threshold"]
+        self.FAST_THRESHOLD = stats["fast_threshold"]
 
     def detect_syllables_parselmouth(self, audio_path: str) -> Tuple[int, List[float]]:
         """Parselmouth를 사용하여 음절 검출"""

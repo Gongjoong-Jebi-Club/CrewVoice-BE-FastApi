@@ -433,10 +433,25 @@ class SpeechAnalysisManager:
 if __name__ == "__main__":
     # 테스트 코드
     manager = SpeechAnalysisManager()
+
+    # 샘플 파일로 테스트
+    test_file = "app/agents/sample/F_ko-KR_track1.wav"
+    test_text = """
+    트랙 1 손님 여러분 도쿄까지 가는 저희 대한항공 701편에 탑승하신 것을 환영합니다. 안전한 여행을 위해 갖고 계신 짐은 앞 좌석 아래나 선반 속에 보관해 주시길 바랍니다. 감사합니다.
+    """
+
+    print(f"\n=== 음성 분석 테스트 ===")
+    print(f"파일: {test_file}")
+    print(f"기대 텍스트: {test_text.strip()}\n")
+
     result = manager.analyze_parallel(
-        "test.wav",
-        reference_text="테스트 문장",
+        test_file,
+        reference_text=test_text.strip(),
         language_code="ko-KR",
         gender="F"
     )
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+    # print("\n=== 분석 결과 ===")
+    # # numpy 타입을 JSON 직렬화 가능한 타입으로 변환
+    # serializable_result = manager._convert_to_python_types(result)
+    # print(json.dumps(serializable_result, ensure_ascii=False, indent=2))

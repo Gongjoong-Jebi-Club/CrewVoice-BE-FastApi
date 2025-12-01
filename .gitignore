@@ -97,3 +97,6 @@ service-account.json
 
 #claude
 .claude
+
+# sample audio files
+app/agents/sample/*.wav
