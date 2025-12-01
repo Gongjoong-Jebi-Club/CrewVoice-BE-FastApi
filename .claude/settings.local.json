@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(tree:*)",
+      "Bash(mkdir:*)",
+      "Bash(done)",
+      "Bash(find app -type d -exec sh -c 'echo \"\"=== {} ===\"\"; ls -la \"\"{}\"\" 2>/dev/null | tail -n +4' ;)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
