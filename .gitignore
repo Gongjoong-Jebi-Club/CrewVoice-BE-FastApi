@@ -94,3 +94,6 @@ secrets/
 *.key
 credentials.json
 service-account.json
+
+#claude
+.claude
