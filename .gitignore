@@ -87,6 +87,7 @@ Thumbs.db
 uploads/
 media/
 static/media/
+temp/
 
 # Secrets & credentials
 secrets/
@@ -94,3 +95,9 @@ secrets/
 *.key
 credentials.json
 service-account.json
+
+#claude
+.claude
+
+# sample audio files
+app/agents/sample/*.wav
