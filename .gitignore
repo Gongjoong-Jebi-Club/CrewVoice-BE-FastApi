@@ -87,6 +87,7 @@ Thumbs.db
 uploads/
 media/
 static/media/
+temp/
 
 # Secrets & credentials
 secrets/
