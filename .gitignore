@@ -101,3 +101,6 @@ service-account.json
 
 # sample audio files
 app/agents/sample/*.wav
+
+# log
+log/
