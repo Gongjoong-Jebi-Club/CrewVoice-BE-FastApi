@@ -1,0 +1,106 @@
+# .github/workflows/ci-cd.yml
+
+name: FastAPI CI/CD to EC2 with GHCR
+
+on:
+  push:
+    branches: [ "main" ] # main 브랜치에 push될 때 워크플로우를 실행합니다.
+
+permissions:
+  contents: read
+  packages: write # GHCR에 이미지를 푸시하기 위해 필요합니다.
+
+env:
+  PROJECT_NAME: crewvoice-fastapi # Docker 컨테이너 및 이미지 이름으로 사용
+
+jobs:
+  # 1. 빌드 및 GHCR 푸시 잡
+  build-and-push-image:
+    name: Build and Push to GHCR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set lower case image name
+        id: string
+        run: echo "image_name=$(echo ghcr.io/${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.string.outputs.image_name }}
+          tags: |
+            type=ref, event=branch
+            type=sha,format=short
+            latest
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Docker 빌드 시 사용할 캐시 설정 (빌드 속도 향상)
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # 2. 배포 잡
+  deploy:
+    name: Deploy to EC2
+    needs: build-and-push-image # build-and-push-image 잡이 성공해야 실행됩니다.
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to EC2 instance
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }} # EC2 인스턴스의 public IP 또는 도메인
+          username: ${{ secrets.DEPLOY_USER }} # EC2 접속 유저 이름 (예: ec2-user, ubuntu)
+          key: ${{ secrets.DEPLOY_SSH_KEY }} # EC2 접속용 SSH Private Key
+          port: 22 # SSH 포트 (기본값 22 사용)
+          script: |
+            # 이미지 이름 변수 설정 (소문자로)
+            IMAGE_NAME=$(echo ghcr.io/${{ github.repository }} | tr '[:upper:]' '[:lower:]')
+
+            # GHCR에 로그인합니다.
+            echo ${{ secrets.GITHUB_TOKEN }} | sudo docker login ghcr.io -u ${{ github.repository_owner }} --password-stdin
+            
+            # 최신 이미지를 pull 받습니다.
+            sudo docker pull $IMAGE_NAME:latest
+
+            # Docker 네트워크를 생성합니다. (이미 존재하면 아무 작업도 하지 않음)
+            sudo docker network create crewvoice-network || true
+            
+            # 기존에 실행 중인 컨테이너가 있다면 중지하고 삭제합니다.
+            sudo docker stop ${{ env.PROJECT_NAME }} || true
+            sudo docker rm ${{ env.PROJECT_NAME }} || true
+            
+            # (선택 사항) 사용하지 않는 오래된 이미지를 삭제하여 디스크 공간을 확보합니다.
+            sudo docker image prune -af
+            
+            # 새 컨테이너를 실행합니다.
+            # GitHub Secrets에 저장된 환경 변수들을 -e 옵션으로 주입합니다.
+            sudo docker run -d --name ${{ env.PROJECT_NAME }} --network crewvoice-network \
+              -p 8000:8000 \
+              -e DB_HOST='${{ secrets.DB_HOST }}' \
+              -e DB_NAME='${{ secrets.DB_NAME }}' \
+              -e DB_USERNAME='${{ secrets.DB_USERNAME }}' \
+              -e DB_PASSWORD='${{ secrets.DB_PASSWORD }}' \
+              -e REDIS_HOST='${{ secrets.REDIS_HOST }}' \
+              -e REDIS_PORT='${{ secrets.REDIS_PORT }}' \
+              -e S3_BUCKET_NAME=${{ secrets.S3_BUCKET_NAME }} \
+              -e AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }} \
+              -e AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }} \
+              -e BASE64_SECRET_KEY=${{ secrets.BASE64_SECRET_KEY }} \
+              --restart always $IMAGE_NAME:latest
