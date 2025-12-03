@@ -92,6 +92,9 @@ jobs:
             # (선택 사항) 사용하지 않는 오래된 이미지를 삭제하여 디스크 공간을 확보합니다.
             sudo docker image prune -af
             
+            # Kill any process using port 8000
+            sudo fuser -k 8000/tcp || true
+            
             # 새 컨테이너를 실행합니다.
             # GitHub Secrets에 저장된 환경 변수들을 -e 옵션으로 주입합니다.
             sudo docker run -d --name ${{ env.PROJECT_NAME }} --network crewvoice-network \
