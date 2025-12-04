@@ -7,7 +7,7 @@ app = FastAPI(title="CrewVoice Evaluation API (Python)")
 # 2. CORS 미들웨어 설정 추가
 # (app = FastAPI() 선언 바로 다음에 위치해야 합니다)
 
-# Spring Boot 설정과 동일하게 허용할 출처(Origin) 목록을 설정합니다.
+# 허용할 출처(Origin) 목록을 설정
 origins = [
     # 개발 환경
     "http://localhost:5173",  # Vite 개발 서버
@@ -25,10 +25,10 @@ origins = [
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,       # 3. 허용할 출처 목록
-    allow_credentials=True,    # 4. 쿠키를 허용할지 여부
-    allow_methods=["*"],       # 5. 허용할 HTTP 메소드 ("*"는 모두 허용)
-    allow_headers=["*"],       # 6. 허용할 HTTP 헤더 ("*"는 모두 허용)
+    allow_origins=origins,       # 허용할 출처 목록
+    allow_credentials=True,    # 쿠키를 허용할지 여부
+    allow_methods=["*"],       # 허용할 HTTP 메소드 ("*"는 모두 허용)
+    allow_headers=["*"],       # 허용할 HTTP 헤더 ("*"는 모두 허용)
 )
 
 @app.get("/health", tags=["Monitoring"])
