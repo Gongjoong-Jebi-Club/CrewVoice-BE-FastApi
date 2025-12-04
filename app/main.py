@@ -7,13 +7,20 @@ app = FastAPI(title="CrewVoice Evaluation API (Python)")
 # 2. CORS 미들웨어 설정 추가
 # (app = FastAPI() 선언 바로 다음에 위치해야 합니다)
 
-# Spring Boot 서버(예: 8080)나 React/Vue 개발서버(예: 3000)의 주소를 등록
+# Spring Boot 설정과 동일하게 허용할 출처(Origin) 목록을 설정합니다.
 origins = [
-    "http://localhost:8080",  # Spring Boot가 서빙하는 프론트엔드 주소
-    "http://localhost:3000",  # (선택) React/Vue 등 프론트엔드 개발 서버 주소
-    "http://127.0.0.1:8080",
-    "http://127.0.0.1:3000",
-    "https://crew-voice-client-vercel.vercel.app/",
+    # 개발 환경
+    "http://localhost:5173",  # Vite 개발 서버
+    "http://localhost:3000",  # React/Vue 등 프론트엔드 개발 서버
+    "http://localhost:8000",  # FastAPI 개발 서버
+    "http://localhost:8080",  # Spring Boot 개발 서버
+
+    # 배포 환경
+    "https://server.crewvoice.cloud",   # Spring Boot 배포 서버
+    "https://ai.crewvoice.cloud",       # FastAPI 배포 서버
+    "https://chat.crewvoice.cloud",     # Chat 배포 서버
+    "https://www.crewvoice.cloud",      # 프로덕션 메인
+    "https://crew-voice-client-vercel.vercel.app" # Vercel 배포 클라이언트
 ]
 
 app.add_middleware(

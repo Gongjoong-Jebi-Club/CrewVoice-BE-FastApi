@@ -206,12 +206,20 @@ http://localhost:8000/redoc
 
 ## CORS 설정
 
-현재 다음 Origin에서의 요청을 허용하도록 설정되어 있습니다:
-- `http://localhost:8080` (Spring Boot 프론트엔드)
-- `http://localhost:3000` (React/Vue 개발 서버)
-- `http://127.0.0.1:8080`
-- `http://127.0.0.1:3000`
-- `https://crew-voice-client-vercel.vercel.app/`
+현재 `app/main.py`에 설정된 허용 출처(Origin) 목록입니다. Spring Boot 서버와 동일한 정책을 유지합니다.
+
+### 개발 환경
+- `http://localhost:5173` (Vite 개발 서버)
+- `http://localhost:3000` (React/Vue 등 프론트엔드 개발 서버)
+- `http://localhost:8000` (FastAPI 개발 서버)
+- `http://localhost:8080` (Spring Boot 개발 서버)
+
+### 배포 환경
+- `https://server.crewvoice.cloud` (Spring Boot 배포 서버)
+- `https://ai.crewvoice.cloud` (FastAPI 배포 서버)
+- `https://chat.crewvoice.cloud` (Chat 배포 서버)
+- `https://www.crewvoice.cloud` (프로덕션 메인)
+- `https://crew-voice-client-vercel.vercel.app` (Vercel 배포 클라이언트)
 
 추가 Origin이 필요한 경우 [app/main.py](app/main.py)의 `origins` 리스트를 수정하세요.
 
