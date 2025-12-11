@@ -11,10 +11,10 @@ from typing import Dict, List, Tuple, Any, Optional
 from pathlib import Path
 
 # 기존 코드 경로 추가
-BASE_DIR = Path(__file__).parent.parent.parent
+BASE_DIR = Path(__file__).parent.parent
 
 # tone baseline JSON 기본 경로 (필요하면 프로젝트 구조에 맞게 수정)
-DEFAULT_TONE_BASELINE_PATH = BASE_DIR / "agents" / "baselines" / "tone_default.json"
+DEFAULT_TONE_BASELINE_PATH = BASE_DIR / "baselines" / "tone_default.json"
 
 class ToneAnalyzer:
     """톤(Tone) 분석기"""

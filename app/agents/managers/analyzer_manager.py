@@ -280,9 +280,24 @@ class SpeechAnalysisManager:
             kwargs["azure_data"] = azure_data
             kwargs["validation_result"] = validate_result["result"]  # Pronunciation용 가중 평균 점수
 
-            # 2단계: 나머지 에이전트 병렬 실행
+            # 2단계: Accent 먼저 실행 (Intonation이 재사용할 데이터 생성)
+            self.logger.info("[ACCENT] 먼저 실행 - Intonation에서 재사용할 Azure STT 데이터 생성")
+            accent_result = self._run_agent("accent", wav_path, **kwargs)
+            results["accent"] = accent_result["result"]
+
+            # Accent의 타임스탬프 데이터를 Intonation에 전달
+            accent_timestamps = accent_result["result"].get("timestamps", [])
+            if accent_timestamps:
+                # Accent의 원본 타임스탬프 데이터 (word, confidence 포함)를 Intonation에 전달
+                kwargs["accent_timestamps"] = accent_timestamps
+                self.logger.info(f"[ACCENT] {len(accent_timestamps)}개 단어의 타임스탬프 데이터를 Intonation에 공유")
+            else:
+                self.logger.warning("[ACCENT] 타임스탬프 데이터가 없어 Intonation이 직접 Azure API 호출")
+
+            # 3단계: 나머지 에이전트 병렬 실행
             # Pronunciation, Pause는 Validate의 가중 평균 점수 사용
-            other_agents = ["pronunciation", "accent", "pause", "intonation", "speed", "tone"]
+            # Intonation은 Accent의 타임스탬프 데이터 사용
+            other_agents = ["pronunciation", "pause", "intonation", "speed", "tone"]
 
             with ThreadPoolExecutor(max_workers=5) as executor:
                 future_to_agent = {

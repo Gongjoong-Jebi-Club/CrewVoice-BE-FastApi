@@ -390,14 +390,3 @@ class ValidateAnalyzer:
                 "status": "error",
                 "azure_data": None
             }
-
-
-if __name__ == "__main__":
-    # 테스트 코드
-    analyzer = ValidateAnalyzer()
-    result = analyzer.analyze(
-        "test.wav",
-        reference_text="안녕하세요 테스트입니다",
-        language_code="ko-KR"
-    )
-    print(json.dumps(result, ensure_ascii=False, indent=2))

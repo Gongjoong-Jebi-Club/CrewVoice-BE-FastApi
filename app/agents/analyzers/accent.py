@@ -36,12 +36,18 @@ class AccentAnalyzer:
             y, sr = librosa.load(wav_path, sr=16000, mono=True)
             trimmed_audio, _ = librosa.effects.trim(y, top_db=30)
             
-            # 임시 파일 저장
+            # 임시 파일 저장 (Windows 호환성 위해 delete=False 사용 후 수동 삭제)
             import tempfile
             import soundfile as sf
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp:
+            
+            # delete=False로 설정하여 파일을 닫아도 삭제되지 않게 함
+            tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+            trimmed_wav_path = tmp.name
+            
+            try:
+                # 데이터를 쓰고 파일 핸들을 닫음 (Windows file lock 해제)
                 sf.write(tmp.name, trimmed_audio, sr)
-                trimmed_wav_path = tmp.name
+                tmp.close()
 
                 # language는 "ko-KR" 또는 "en-US" 형식으로 통일
                 lang_code = language
@@ -102,6 +108,33 @@ class AccentAnalyzer:
                 if all_timestamps:
                     return all_timestamps
                 return None
+
+            finally:
+                # Azure SDK 객체 명시적 해제 (파일 핸들 반환 유도)
+                # try 블록 내에서 생성된 변수들이라 존재 여부 확인 필요
+                if 'recognizer' in locals(): del recognizer
+                if 'audio_config' in locals(): del audio_config
+                
+                # 가비지 컬렉션 강제 수행 (선택사항, 안전장치)
+                import gc
+                gc.collect()
+
+                # 작업 완료 후 수동 삭제 (재시도 로직 추가)
+                if os.path.exists(trimmed_wav_path):
+                    max_retries = 3
+                    for i in range(max_retries):
+                        try:
+                            os.remove(trimmed_wav_path)
+                            break
+                        except PermissionError:
+                            if i < max_retries - 1:
+                                import time
+                                time.sleep(0.5)  # 잠시 대기 후 재시도
+                            else:
+                                print(f"WARN: 임시 파일 삭제 실패 (최종): {trimmed_wav_path}")
+                        except Exception as e:
+                            print(f"WARN: 임시 파일 삭제 중 오류: {e}")
+                            break
 
         except Exception as e:
             print(f"AccentAnalyzer: Azure STT 오류: {e}")
@@ -386,7 +419,8 @@ class AccentAnalyzer:
                 "status": "success",
                 "score_pitch": metrics["score_pitch"],
                 "score_energy": metrics["score_energy"],
-                "features": user_features
+                "features": user_features,
+                "timestamps": user_timestamps  # Intonation 재사용용 원본 타임스탬프 (word, confidence 포함)
             }
 
         except Exception as e:
