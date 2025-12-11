@@ -145,64 +145,64 @@ class SubmissionService:
 # 백그라운드 처리 함수
 # ============================================================================
 
-# async def run_ai_analysis(
-#     submission_id: int,
-#     file_path: str,
-#     request: SubmissionRequest
-# ) -> None:
-#     """
-#     AI 분석 백그라운드 작업 (현재는 Mock)
+async def run_ai_analysis(
+    submission_id: int,
+    file_path: str,
+    request: SubmissionRequest
+) -> None:
+    """
+    AI 분석 백그라운드 작업 (현재는 Mock)
 
-#     실제 환경에서는:
-#     1. STT (Speech-to-Text) 변환
-#     2. 발음 평가 (Pronunciation)
-#     3. 억양 분석 (Intonation)
-#     4. 속도 분석 (Speed)
-#     5. 감정/톤 분석 (Tone)
-#     6. 종합 피드백 생성
-#     7. DB 결과 저장
+    실제 환경에서는:
+    1. STT (Speech-to-Text) 변환
+    2. 발음 평가 (Pronunciation)
+    3. 억양 분석 (Intonation)
+    4. 속도 분석 (Speed)
+    5. 감정/톤 분석 (Tone)
+    6. 종합 피드백 생성
+    7. DB 결과 저장
 
-#     Args:
-#         submission_id: 제출 ID
-#         file_path: 오디오 파일 경로
-#         request: 제출 요청 정보
-#     """
-#     print("\n" + "="*80)
-#     print(f"[BackgroundTask] AI 분석 시작")
-#     print(f"  - submission_id: {submission_id}")
-#     print(f"  - file_path: {file_path}")
-#     print(f"  - language: {request.language}")
-#     print(f"  - step: {request.step}")
-#     print("="*80)
+    Args:
+        submission_id: 제출 ID
+        file_path: 오디오 파일 경로
+        request: 제출 요청 정보
+    """
+    print("\n" + "="*80)
+    print(f"[BackgroundTask] AI 분석 시작")
+    print(f"  - submission_id: {submission_id}")
+    print(f"  - file_path: {file_path}")
+    print(f"  - language: {request.language}")
+    print(f"  - step: {request.step}")
+    print("="*80)
 
-#     try:
-#         # Mock: 5초간 분석 수행 (실제로는 STT, 발음 평가 등 수행)
-#         print("[BackgroundTask] STT 변환 중...")
-#         await asyncio.sleep(1)
+    try:
+        # Mock: 5초간 분석 수행 (실제로는 STT, 발음 평가 등 수행)
+        print("[BackgroundTask] STT 변환 중...")
+        await asyncio.sleep(1)
 
-#         print("[BackgroundTask] 발음 평가 중...")
-#         await asyncio.sleep(1)
+        print("[BackgroundTask] 발음 평가 중...")
+        await asyncio.sleep(1)
 
-#         print("[BackgroundTask] 억양 분석 중...")
-#         await asyncio.sleep(1)
+        print("[BackgroundTask] 억양 분석 중...")
+        await asyncio.sleep(1)
 
-#         print("[BackgroundTask] 속도 분석 중...")
-#         await asyncio.sleep(1)
+        print("[BackgroundTask] 속도 분석 중...")
+        await asyncio.sleep(1)
 
-#         print("[BackgroundTask] 종합 피드백 생성 중...")
-#         await asyncio.sleep(1)
+        print("[BackgroundTask] 종합 피드백 생성 중...")
+        await asyncio.sleep(1)
 
-#         # TODO: 실제 환경에서는 분석 결과를 DB에 저장
-#         print(f"[BackgroundTask] 분석 완료! (submission_id={submission_id})")
-#         print(f"[BackgroundTask] 결과를 DB에 저장해야 함 (현재는 Mock)")
+        # TODO: 실제 환경에서는 분석 결과를 DB에 저장
+        print(f"[BackgroundTask] 분석 완료! (submission_id={submission_id})")
+        print(f"[BackgroundTask] 결과를 DB에 저장해야 함 (현재는 Mock)")
 
-#     except Exception as e:
-#         print(f"[BackgroundTask] 에러 발생: {e}")
-#         # TODO: 에러 로깅 및 DB 상태 업데이트
-#         raise
+    except Exception as e:
+        print(f"[BackgroundTask] 에러 발생: {e}")
+        # TODO: 에러 로깅 및 DB 상태 업데이트
+        raise
 
-#     finally:
-#         print("="*80 + "\n")
+    finally:
+        print("="*80 + "\n")
 
 
 # 싱글톤 인스턴스

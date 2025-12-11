@@ -1,20 +1,32 @@
 """
 Intonation Analysis Agent
 음성 파일의 억양(Intonation) 분석을 수행하는 에이전트
+ISO 25000 품질 모델 + 항공기 음성인식 품질 평가 모델 논문 기반
 """
+import os
 import json
 import numpy as np
 import librosa
-from typing import Dict
+import azure.cognitiveservices.speech as speechsdk
+from typing import Dict, Optional, List
 from pathlib import Path
 
 
 class IntonationAnalyzer:
-    """억양(Intonation) 분석기"""
+    """억양(Intonation) 분석기 - ISO 25000 품질 모델 기반"""
 
-    def __init__(self, baseline_dir: str = "app/agents/baselines"):
+    def __init__(self, baseline_dir: str = "baselines"):
         self.baseline_dir = Path(baseline_dir)
         self.baseline_cache = {}
+
+        # ISO 25000 품질 특성별 가중치 (상황별로 변경 가능)
+        self.default_quality_weights = {
+            "functionality": 0.35,      # 기능 적합성
+            "performance_efficiency": 0.15,  # 성능 효율성
+            "reliability": 0.15,        # 신뢰성
+            "usability": 0.25,          # 사용성
+            "portability": 0.10         # 이식성
+        }
 
     def analyze_sentence_ending(self, f0, percentage=0.2):
         """문장 마지막 부분의 억양 패턴 분석 (상승/하강/평탄)"""
@@ -58,6 +70,44 @@ class IntonationAnalyzer:
         return {
             "rhythm_type": rhythm_type,
             "energy_variability": float(energy_variability)
+        }
+
+    def _extract_pause_features(self, y: np.ndarray, sr: int) -> Dict:
+        """
+        Pause 관련 특징 추출 (논문 기반)
+        - pause_ratio: 전체 시간 중 침묵 비율
+        - avg_pause_duration: 평균 pause 길이
+        """
+        # librosa.effects.split으로 음성 구간 검출
+        intervals = librosa.effects.split(y, top_db=30)
+
+        # 전체 길이
+        total_duration = len(y) / sr
+
+        # 음성 구간 길이 합
+        speech_duration = sum([(end - start) / sr for start, end in intervals])
+
+        # 침묵 구간 길이
+        silence_duration = total_duration - speech_duration
+
+        # pause_ratio 계산
+        pause_ratio = silence_duration / total_duration if total_duration > 0 else 0
+
+        # 각 pause 구간의 길이 계산
+        pause_durations = []
+        for i in range(len(intervals) - 1):
+            pause_start = intervals[i][1] / sr
+            pause_end = intervals[i + 1][0] / sr
+            pause_dur = pause_end - pause_start
+            if pause_dur > 0.05:  # 50ms 이상만 유효한 pause로 간주
+                pause_durations.append(pause_dur)
+
+        avg_pause_duration = np.mean(pause_durations) if pause_durations else 0
+
+        return {
+            "pause_ratio": float(pause_ratio),
+            "avg_pause_duration": float(avg_pause_duration),
+            "pause_count": len(pause_durations)
         }
 
     def extract_features(self, audio_path: str) -> Dict:
@@ -107,6 +157,12 @@ class IntonationAnalyzer:
         mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
         mfcc_mean = np.mean(mfcc, axis=1)
 
+        # 10. Pause 관련 특징 (신규 추가 - 논문 기반)
+        pause_features = self._extract_pause_features(y, sr)
+
+        # 11. 문장 끝 하강 정도 (한국어 전용)
+        sentence_final_lowering = -ending_info["ending_slope"] if ending_info["ending_slope"] < 0 else 0
+
         return {
             # 기본 피치
             "f0_mean": float(f0_mean),
@@ -144,6 +200,12 @@ class IntonationAnalyzer:
             "ending_type": ending_info["ending_type"],
             "rhythm_type": rhythm_info["rhythm_type"],
             "energy_variability": rhythm_info["energy_variability"],
+
+            # 신규 추가 (논문 기반)
+            "pause_ratio": pause_features["pause_ratio"],
+            "avg_pause_duration": pause_features["avg_pause_duration"],
+            "pause_count": pause_features["pause_count"],
+            "sentence_final_lowering": float(sentence_final_lowering),
         }
 
     def get_language_specific_weights(self, lang):
@@ -241,6 +303,192 @@ class IntonationAnalyzer:
 
         return total_score, item_scores
 
+    def _get_asr_metrics(self, wav_path: str, reference_text: Optional[str], language_code: str) -> Dict:
+        """
+        ASR 보조 지표 계산 (논문 핵심 지표)
+        - asr_confidence_mean: Azure STT 인식 신뢰도 평균
+        - asr_confidence_std: 신뢰도 변동폭
+        - asr_wer: Word Error Rate (reference_text가 있을 때만)
+        """
+        try:
+            speech_key = os.getenv("SPEECH_KEY") or os.getenv("AZURE_SPEECH_KEY")
+            speech_region = os.getenv("SPEECH_REGION") or os.getenv("AZURE_SPEECH_REGION")
+
+            if not speech_key or not speech_region:
+                # Azure 없을 때 중립값 사용 (0점 패널티 방지)
+                return {
+                    "asr_confidence_mean": 0.7,  # 중립적 신뢰도
+                    "asr_confidence_std": 0.1,   # 낮은 변동성
+                    "asr_wer": 0.0,
+                    "asr_status": "disabled"
+                }
+
+            # Azure STT 설정
+            lang_code = language_code if language_code else "ko-KR"
+            speech_config = speechsdk.SpeechConfig(subscription=speech_key, region=speech_region)
+            speech_config.speech_recognition_language = lang_code
+
+            audio_config = speechsdk.audio.AudioConfig(filename=wav_path)
+            recognizer = speechsdk.SpeechRecognizer(speech_config=speech_config, audio_config=audio_config)
+
+            # 음성 인식 실행
+            result = recognizer.recognize_once()
+
+            if result.reason == speechsdk.ResultReason.RecognizedSpeech:
+                # JSON 결과 파싱
+                json_result = json.loads(result.properties.get(speechsdk.PropertyId.SpeechServiceResponse_JsonResult))
+
+                # Confidence 추출
+                words = json_result.get('NBest', [{}])[0].get('Words', [])
+                if words:
+                    confidences = [w.get('Confidence', 0.0) for w in words]
+                    asr_confidence_mean = float(np.mean(confidences))
+                    asr_confidence_std = float(np.std(confidences))
+                else:
+                    asr_confidence_mean = 0.0
+                    asr_confidence_std = 0.0
+
+                # WER 계산 (reference_text가 있을 때만)
+                asr_wer = 0.0
+                if reference_text:
+                    try:
+                        from jiwer import wer
+                        recognized_text = result.text
+                        asr_wer = float(wer(reference_text, recognized_text))
+                    except ImportError:
+                        # jiwer 없으면 WER 계산 생략
+                        asr_wer = 0.0
+
+                return {
+                    "asr_confidence_mean": asr_confidence_mean,
+                    "asr_confidence_std": asr_confidence_std,
+                    "asr_wer": asr_wer,
+                    "recognized_text": result.text,
+                    "asr_status": "success"
+                }
+            else:
+                # Azure STT 실패 시 중립값 사용
+                return {
+                    "asr_confidence_mean": 0.5,  # 중립적 신뢰도
+                    "asr_confidence_std": 0.15,  # 중간 변동성
+                    "asr_wer": 0.0,
+                    "asr_status": "failed"
+                }
+
+        except Exception as e:
+            # 예외 발생 시 중립값 사용
+            return {
+                "asr_confidence_mean": 0.5,
+                "asr_confidence_std": 0.15,
+                "asr_wer": 0.0,
+                "asr_status": f"error: {str(e)}"
+            }
+
+    def _compute_quality_attributes(self, metrics: Dict, lang: str, asr_metrics: Dict) -> Dict:
+        """
+        ISO 25000 품질 특성 계층 점수 계산
+        Metric → Quality Attribute 매핑
+        """
+        # 1. 기능 적합성 (Functionality): 억양이 언어별 규칙에 맞는가?
+        functionality_score = 0.0
+        if lang.startswith("ko"):
+            # 한국어: 문장 끝 하강 패턴 + 리듬 타입 + ASR 정확도
+            functionality_score = (
+                0.3 * (metrics.get("sentence_final_lowering", 0) / 10.0 * 100) +  # 문장 끝 하강
+                0.2 * (100 if metrics.get("rhythm_type") == "syllable-timed" else 50) +  # 리듬 타입
+                0.3 * (100 - asr_metrics.get("asr_wer", 0) * 100) +  # WER (낮을수록 좋음)
+                0.2 * (asr_metrics.get("asr_confidence_mean", 0) * 100)  # ASR 신뢰도
+            )
+        else:
+            # 영어: 강세 패턴 + ASR 정확도
+            functionality_score = (
+                0.2 * (100 if metrics.get("rhythm_type") == "stress-timed" else 50) +
+                0.3 * (metrics.get("falling_ratio", 0.5) * 200) +  # 하강 억양 (핵 톤)
+                0.3 * (100 - asr_metrics.get("asr_wer", 0) * 100) +
+                0.2 * (asr_metrics.get("asr_confidence_mean", 0) * 100)
+            )
+
+        # 2. 성능 효율성 (Performance Efficiency): 적정 시간 내 전달
+        duration = metrics.get("duration", 0)
+        pause_ratio = metrics.get("pause_ratio", 0)
+        performance_score = (
+            0.6 * (100 if 5 <= duration <= 30 else 70) +  # 적정 길이 (5~30초)
+            0.4 * (100 if 0.1 <= pause_ratio <= 0.3 else 70)  # 적정 pause 비율
+        )
+
+        # 3. 신뢰성 (Reliability): 안정적이고 일관된 억양
+        reliability_score = (
+            0.4 * (100 - min(metrics.get("f0_std", 0) / 50 * 100, 100)) +  # F0 변동성 (너무 크면 감점)
+            0.3 * (100 - min(metrics.get("energy_std", 0) / 0.2 * 100, 100)) +  # Energy 변동성
+            0.3 * (100 - asr_metrics.get("asr_confidence_std", 0) * 200)  # ASR 신뢰도 변동 (작을수록 좋음)
+        )
+
+        # 4. 사용성 (Usability): 이해하기 쉽고 표현력 풍부
+        usability_score = (
+            0.3 * (metrics.get("f0_range", 0) / 200 * 100) +  # F0 범위 (표현력)
+            0.3 * (metrics.get("energy_variability", 0) * 1000) +  # 에너지 변동 (강세 표현)
+            0.4 * (asr_metrics.get("asr_confidence_mean", 0) * 100)  # 명료성
+        )
+
+        # 5. 이식성 (Portability): 화자/언어 적응성
+        portability_score = 100.0  # 기본 점수 (개인 baseline 구축 시 활용)
+
+        return {
+            "functionality": max(0, min(100, functionality_score)),
+            "performance_efficiency": max(0, min(100, performance_score)),
+            "reliability": max(0, min(100, reliability_score)),
+            "usability": max(0, min(100, usability_score)),
+            "portability": max(0, min(100, portability_score))
+        }
+
+    def _compute_final_score_from_quality(self, quality_scores: Dict, quality_weights: Dict) -> float:
+        """
+        ISO 25000 품질 특성별 점수 → 최종 점수 (가중합)
+        """
+        final_score = sum(
+            quality_scores[attr] * quality_weights[attr]
+            for attr in quality_weights.keys()
+        )
+        return max(0, min(100, final_score))
+
+    def get_scenario_weights(self, scenario: str = "general") -> Dict:
+        """
+        상황별 ISO 25000 품질 특성 가중치 설계 (논문 기반)
+
+        Args:
+            scenario: "safety_takeoff", "service_inflight", "emergency", "general" 등
+        """
+        if scenario == "safety_takeoff":
+            # 안전 안내 (이륙 전): 기능 적합성 최우선
+            return {
+                "functionality": 0.50,
+                "performance_efficiency": 0.10,
+                "reliability": 0.20,
+                "usability": 0.20,
+                "portability": 0.00
+            }
+        elif scenario == "service_inflight":
+            # 기내 서비스: 사용성 (친절함) 우선
+            return {
+                "functionality": 0.20,
+                "performance_efficiency": 0.10,
+                "reliability": 0.20,
+                "usability": 0.50,
+                "portability": 0.00
+            }
+        elif scenario == "emergency":
+            # 긴급 안내: 기능 + 성능 우선
+            return {
+                "functionality": 0.40,
+                "performance_efficiency": 0.30,
+                "reliability": 0.20,
+                "usability": 0.10,
+                "portability": 0.00
+            }
+        else:
+            # 일반 (기본값)
+            return self.default_quality_weights
+
     def load_baseline(self, baseline_name: str = "default") -> Dict:
         """Baseline 로드"""
         if baseline_name in self.baseline_cache:
@@ -256,24 +504,25 @@ class IntonationAnalyzer:
         self.baseline_cache[baseline_name] = baseline
         return baseline
 
-    def analyze(self, wav_path: str, reference_text: str = None, baseline_name: str = "default", language_code: str = None) -> Dict:
+    def analyze(self, wav_path: str, reference_text: str = None, baseline_name: str = "default", language_code: str = None, scenario: str = "general", weight_baseline: float = 0.7, weight_iso: float = 0.3) -> Dict:
         """
-        억양 분석 수행
+        억양 분석 수행 (ISO 25000 + 논문 기반)
 
         Args:
             wav_path: WAV 파일 경로
-            reference_text: 참조 텍스트 (사용 안 함)
+            reference_text: 참조 텍스트 (WER 계산용, 선택)
             baseline_name: Baseline 이름
             language_code: 언어 코드 (선택적, 없으면 파일명 기반 판별)
+            scenario: 상황별 가중치 ("safety_takeoff", "service_inflight", "emergency", "general")
 
         Returns:
-            분석 결과 딕셔너리 (0-100점 환산)
+            분석 결과 딕셔너리 (ISO 25000 품질 특성 포함, 0-100점 환산)
         """
         try:
-            # 특징 추출
+            # 1. 특징 추출
             test_features = self.extract_features(wav_path)
 
-            # 언어 감지 (language_code > 파일명 기반 판별)
+            # 2. 언어 감지
             if language_code:
                 lang = language_code
             else:
@@ -284,70 +533,79 @@ class IntonationAnalyzer:
                 else:
                     lang = "en-US"
 
-            # Baseline 비교
-            baseline = self.load_baseline(baseline_name)
+            # 3. ASR 보조 지표 추출 (논문 핵심)
+            asr_metrics = self._get_asr_metrics(wav_path, reference_text, lang)
 
+            # 4. ISO 25000 품질 특성 계산
+            quality_scores = self._compute_quality_attributes(test_features, lang, asr_metrics)
+
+            # 5. 상황별 가중치 적용
+            quality_weights = self.get_scenario_weights(scenario)
+
+            # 6. 최종 점수 계산 (ISO 25000 기반)
+            final_score_iso = self._compute_final_score_from_quality(quality_scores, quality_weights)
+
+            # 7. 기존 Baseline 비교 (하위 호환성 유지)
+            baseline = self.load_baseline(baseline_name)
+            baseline_score = 0
             if baseline and "reference_features" in baseline:
                 ref_features = baseline["reference_features"]
                 score_20, item_scores = self.compare_with_reference(test_features, ref_features, lang)
+                baseline_score = (score_20 / 20) * 100
 
-                # 20점 만점을 100점 만점으로 환산
-                score_100 = (score_20 / 20) * 100
-
-                feedback = [
-                    f"언어: {'한국어' if lang.startswith('ko') else '영어'}",
-                    f"억양 점수: {score_20:.1f} / 20.0점",
-                    f"리듬 타입: {test_features['rhythm_type']}",
-                    f"문장 종결 패턴: {test_features['ending_type']}"
-                ]
-
-                # 등급 판정
-                if score_100 >= 90:
-                    feedback.append("S등급: 표준 억양을 자연스럽고 세련되게 구사합니다.")
-                elif score_100 >= 80:
-                    feedback.append("A등급: 전반적으로 자연스럽게 구사합니다.")
-                elif score_100 >= 70:
-                    feedback.append("B등급: 대체로 무난하나 일부 억양이 반복됩니다.")
-                else:
-                    feedback.append("C등급: 억양 변화가 부족하여 부자연스럽습니다.")
-
-                return {
-                    "score": round(score_100, 2),
-                    "max_score": 100,
-                    "feedback": feedback,
-                    "status": "success",
-                    "language": lang,
-                    "rhythm_type": test_features["rhythm_type"],
-                    "ending_type": test_features["ending_type"],
-                    "features": test_features
-                }
+            # 8. 최종 점수: Baseline 우선, ISO는 보조 역할
+            # Baseline이 있으면 가중치 적용, 없으면 ISO 100%
+            if baseline_score > 0:
+                final_score = baseline_score * weight_baseline + final_score_iso * weight_iso
             else:
-                # Baseline 없으면 기본 점수 (80점)
-                return {
-                    "score": 80,
-                    "max_score": 100,
-                    "feedback": [
-                        f"언어: {'한국어' if lang.startswith('ko') else '영어'}",
-                        f"리듬 타입: {test_features['rhythm_type']}",
-                        f"문장 종결 패턴: {test_features['ending_type']}",
-                        "Baseline 없음 - 기본 점수 부여"
-                    ],
-                    "status": "warning",
-                    "language": lang,
-                    "features": test_features
-                }
+                final_score = final_score_iso
+
+            # 9. 피드백 생성
+            feedback = [
+                f"언어: {'한국어' if lang.startswith('ko') else '영어'}",
+                f"상황: {scenario}",
+                f"최종 점수: {final_score:.1f}점 (ISO 25000 기반)",
+                f"리듬 타입: {test_features['rhythm_type']}",
+                f"문장 종결 패턴: {test_features['ending_type']}",
+                "",
+                "=== ISO 25000 품질 특성별 점수 ===",
+                f"기능 적합성: {quality_scores['functionality']:.1f}점",
+                f"성능 효율성: {quality_scores['performance_efficiency']:.1f}점",
+                f"신뢰성: {quality_scores['reliability']:.1f}점",
+                f"사용성: {quality_scores['usability']:.1f}점",
+                f"이식성: {quality_scores['portability']:.1f}점",
+                "",
+                f"ASR 인식 신뢰도: {asr_metrics['asr_confidence_mean']*100:.1f}%",
+            ]
+
+            # WER 정보 추가 (reference_text가 있을 때만)
+            if reference_text and asr_metrics.get('asr_wer', 0) > 0:
+                feedback.append(f"ASR WER: {asr_metrics['asr_wer']*100:.1f}%")
+
+            return {
+                "score": round(final_score, 2),
+                "max_score": 100,
+                "feedback": feedback,
+                "status": "success",
+                "language": lang,
+                "scenario": scenario,
+                "rhythm_type": test_features["rhythm_type"],
+                "ending_type": test_features["ending_type"],
+                # ISO 25000 품질 특성 점수
+                "quality_scores": quality_scores,
+                "quality_weights": quality_weights,
+                # ASR 보조 지표
+                "asr_metrics": asr_metrics,
+                # 원본 특징
+                "features": test_features
+            }
 
         except Exception as e:
             return {
-                "score": 70,
+                "score": 0,
                 "max_score": 100,
-                "feedback": [f"분석 중 오류 발생: {str(e)}", "기본 점수를 부여합니다."],
-                "status": "warning"
+                "status": "error",
+                "error_message": str(e),
+                "quality_scores": {},
+                "asr_metrics": {}
             }
-
-
-if __name__ == "__main__":
-    # 테스트 코드
-    analyzer = IntonationAnalyzer()
-    result = analyzer.analyze("test.wav")
-    print(json.dumps(result, ensure_ascii=False, indent=2))

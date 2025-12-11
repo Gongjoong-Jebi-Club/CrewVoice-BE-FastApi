@@ -5,43 +5,25 @@ Pause Analysis Agent
 import json
 import os
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional, Any
 
 # Azure는 pronunciation 에이전트에서 이미 호출되므로 여기서는 직접 분석
+
+# 기존 코드 경로 추가
+BASE_DIR = Path(__file__).parent.parent.parent  # app/agents/analyzers -> app/agents/ -> app/
+
+# pause baseline JSON 기본 경로
+DEFAULT_PAUSE_BASELINE_PATH = BASE_DIR / "agents" / "baselines" / "pause_default.json"
 
 
 class PauseAnalyzer:
     """휴지(Pause) 분석기"""
 
-    # Pause 임계값 (초)
-    MIN_PAUSE_THRESHOLD = 0.15
-
-    # 권장 Pause 길이 (초)
-    RECOMMENDED_PAUSE = {
-        'after_period': {
-            'min': 0.5,
-            'max': 4.0,
-            'optimal': 0.8
-        },
-        'after_comma': {
-            'min': 0.2,
-            'max': 0.9,
-            'optimal': 0.4
-        },
-        'after_question': {
-            'min': 0.5,
-            'max': 4.0,
-            'optimal': 0.7
-        },
-        'after_exclamation': {
-            'min': 0.5,
-            'max': 4.0,
-            'optimal': 0.7
-        }
-    }
+    # Pause 임계값 기본값 (baseline이 없을 때 사용)
+    DEFAULT_MIN_PAUSE_THRESHOLD = 0.15
 
     def __init__(self):
-        pass
+        self._baseline: Optional[Dict[str, Any]] = None  # pause baseline 데이터 저장용
 
     def extract_punctuation_positions(self, script_text: str) -> Dict[str, List[int]]:
         """정답 스크립트에서 문장부호 위치 추출"""
@@ -57,11 +39,11 @@ class PauseAnalyzer:
         for i, word in enumerate(words):
             if '.' in word or '。' in word:
                 positions['period'].append(i)
-            elif '?' in word or '?' in word:
+            elif '?' in word or '？' in word:  # U+003F (반각), U+FF1F (전각)
                 positions['question'].append(i)
-            elif '!' in word or '!' in word:
+            elif '!' in word or '！' in word:  # U+0021 (반각), U+FF01 (전각)
                 positions['exclamation'].append(i)
-            elif ',' in word or ',' in word:
+            elif ',' in word or '、' in word:  # U+002C (반각), U+3001 (전각)
                 positions['comma'].append(i)
 
         return positions
@@ -81,96 +63,287 @@ class PauseAnalyzer:
 
     def is_good_pause(self, context: str) -> bool:
         """Good Pause 여부 판단"""
-        return context in ['after_period', 'after_comma', 'after_question', 'after_exclamation']
+        return context in ['after_period', 'after_comma', 'after_question', 'after_exclamation', 'mid_phrase_breath']
 
-    def evaluate_pause_length(self, pause_sec: float, context: str) -> Tuple[bool, str, str]:
-        """Pause 길이 적절성 평가"""
-        if context not in self.RECOMMENDED_PAUSE:
-            return True, 'neutral', "문장 중간 (평가 안 함)"
+    # ------------------------------------------------------------------
+    # Baseline 로딩 및 통계 접근 로직
+    # ------------------------------------------------------------------
 
-        rec = self.RECOMMENDED_PAUSE[context]
-        optimal = rec['optimal']
-        min_val = rec['min']
-        max_val = rec['max']
+    def _ensure_baseline_loaded(
+        self,
+        baseline_path: Path = DEFAULT_PAUSE_BASELINE_PATH,
+    ) -> None:
+        """pause_default.json을 한 번만 로드"""
+        if self._baseline is None:
+            with open(baseline_path, "r", encoding="utf-8") as f:
+                self._baseline = json.load(f)
 
-        diff = abs(pause_sec - optimal)
-        diff_percent = diff / optimal
+    def _get_context_features(
+        self,
+        language_code: str,
+        context: str,
+    ) -> Dict[str, Dict[str, float]]:
+        """
+        baseline에서 context별 feature 통계를 가져오는 함수.
 
-        # 범위 내
-        if min_val <= pause_sec <= max_val:
-            if diff_percent <= 0.15:
-                return True, 'perfect', f"완벽 (최적: {optimal}초)"
-            elif diff_percent <= 0.25:
-                return True, 'acceptable', f"양호 (최적: {optimal}초)"
-            elif pause_sec < optimal * 0.7:
-                return True, 'major', f"범위 내지만 너무 짧음 (권장: {min_val}-{max_val}초)"
-            else:
-                return True, 'minor', f"허용 범위 내 (권장: {min_val}-{max_val}초)"
+        구조:
+            baseline["languages"][language_code]["contexts"][context]["features"]
 
-        # 범위 벗어남
-        if pause_sec < min_val:
-            shortage = min_val - pause_sec
-            if shortage <= 0.05:
-                return False, 'minor', f"약간 짧음 (권장: {min_val}-{max_val}초)"
-            else:
-                return False, 'major', f"너무 짧음 (권장: {min_val}-{max_val}초)"
+        Returns:
+            {
+                "pause_sec": {"mean": 0.75, "std": 0.22},
+                "prev_phrase_duration_sec": {"mean": 4.2, "std": 1.1},
+                "words_since_last_pause": {"mean": 12.5, "std": 3.2}
+            }
+        """
+        if self._baseline is None:
+            raise RuntimeError("Baseline is not loaded. Call _ensure_baseline_loaded() first.")
+
+        langs = self._baseline.get("languages", {})
+        if language_code not in langs:
+            raise ValueError(f"Language '{language_code}' not found in pause baseline.")
+
+        contexts = langs[language_code].get("contexts", {})
+        if context not in contexts:
+            raise ValueError(f"Context '{context}' not found for language '{language_code}' in pause baseline.")
+
+        return contexts[context]["features"]
+
+    @staticmethod
+    def _get_feature_stats(
+        context_features: Dict[str, Dict[str, float]],
+        feature_name: str,
+    ) -> Tuple[float, float]:
+        """각 feature에 대해 baseline에서의 평균(mean)과 표준편차(std)를 반환"""
+        stats = context_features[feature_name]
+        return stats["mean"], stats["std"]
+
+    def _get_min_pause_threshold(self, language_code: str) -> float:
+        """
+        Baseline에서 언어별 최소 pause 임계값 가져오기
+
+        Args:
+            language_code: 언어 코드 (예: ko-KR)
+
+        Returns:
+            최소 pause 임계값 (초)
+        """
+        if self._baseline is None:
+            raise RuntimeError("Baseline is not loaded. Call _ensure_baseline_loaded() first.")
+
+        threshold = self._baseline["languages"][language_code]["min_pause_threshold"]
+        return float(threshold)
+
+    def _get_mid_phrase_breath_criteria(self, language_code: str) -> Tuple[Optional[float], Optional[int]]:
+        """
+        Baseline에서 언어별 mid_phrase_breath 판단 기준 가져오기
+
+        Args:
+            language_code: 언어 코드 (예: ko-KR)
+
+        Returns:
+            (min_prev_phrase_duration_sec, min_words_since_last_pause) 튜플
+            값이 없으면 None 반환
+        """
+        if self._baseline is None:
+            raise RuntimeError("Baseline is not loaded. Call _ensure_baseline_loaded() first.")
+
+        criteria = self._baseline["languages"][language_code].get("mid_phrase_breath_criteria")
+        if not criteria:
+            return None, None
+
+        min_duration = criteria.get("min_prev_phrase_duration_sec")
+        min_words = criteria.get("min_words_since_last_pause")
+
+        return (
+            float(min_duration) if min_duration is not None else None,
+            int(min_words) if min_words is not None else None
+        )
+
+    def _get_good_pause_ratio_stats(self, language_code: str) -> Tuple[Optional[float], Optional[float]]:
+        """
+        Baseline에서 언어별 good_pause_ratio 통계 가져오기
+
+        Args:
+            language_code: 언어 코드 (예: ko-KR)
+
+        Returns:
+            (mean, std) 튜플
+            값이 없으면 (None, None) 반환
+        """
+        if self._baseline is None:
+            raise RuntimeError("Baseline is not loaded. Call _ensure_baseline_loaded() first.")
+
+        stats = self._baseline["languages"][language_code].get("good_pause_ratio")
+        if not stats:
+            return None, None
+
+        mean = stats.get("mean")
+        std = stats.get("std")
+
+        return (
+            float(mean) if mean is not None else None,
+            float(std) if std is not None else None
+        )
+
+    # ------------------------------------------------------------------
+    # Z-score 계산 및 점수 변환 함수
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _z_score(value: float, mean: float, std: float) -> float:
+        """z = (x - μ) / σ"""
+        return (value - mean) / (std + 1e-9)
+
+    @staticmethod
+    def _clip(value: float, min_value: float = 0.0, max_value: float = 10.0) -> float:
+        return max(min_value, min(max_value, value))
+
+    @staticmethod
+    def _center_optimal_score(
+        z: float,
+        max_score: float = 10.0,
+        z_zero: float = 2.5,
+        z_full: float = 0.5,
+    ) -> float:
+        """
+        만점 범위를 추가한 center optimal score 함수
+
+        |z| ≤ z_full → max_score (만점 범위)
+        z_full < |z| < z_zero → 선형 감점
+        |z| ≥ z_zero → 0점
+        """
+        dz = abs(z)
+
+        # 만점 범위
+        if dz <= z_full:
+            return max_score
+
+        # 0점 범위
+        if dz >= z_zero:
+            return 0.0
+
+        # z_full ~ z_zero 사이에서 선형 감점
+        ratio = (dz - z_full) / (z_zero - z_full)
+        score = max_score * (1.0 - ratio)
+        return PauseAnalyzer._clip(score, 0.0, max_score)
+
+    @staticmethod
+    def _higher_is_better_score(
+        z: float,
+        max_score: float = 10.0,
+        z_zero: float = -2.5,
+        z_full: float = 0.5,
+    ) -> float:
+        """
+        높을수록 좋은 지표를 위한 점수 함수
+
+        z ≥ z_full → max_score (만점)
+        z_zero < z < z_full → 선형 증가
+        z ≤ z_zero → 0점
+        """
+        # 만점 범위 (평균 이상)
+        if z >= z_full:
+            return max_score
+
+        # 0점 범위 (너무 낮음)
+        if z <= z_zero:
+            return 0.0
+
+        # z_zero ~ z_full 사이에서 선형 증가
+        ratio = (z - z_zero) / (z_full - z_zero)
+        score = max_score * ratio
+        return PauseAnalyzer._clip(score, 0.0, max_score)
+
+    # ------------------------------------------------------------------
+    # Baseline 기반 Pause 평가
+    # ------------------------------------------------------------------
+
+    def evaluate_pause_with_baseline(
+        self,
+        pause_sec: float,
+        context: str,
+        prev_phrase_duration_sec: float,
+        words_since_last_pause: int,
+        language_code: str = "ko-KR",
+    ) -> Tuple[bool, float, float]:
+        """
+        Baseline 통계를 활용한 Pause 평가
+
+        Returns:
+            (is_good, pause_total_score, z_pause)
+        """
+        # mid_phrase (bad pause)는 평가하지 않음
+        if context == 'mid_phrase':
+            return False, 0.0, 0.0
+
+        try:
+            context_features = self._get_context_features(language_code, context)
+        except ValueError:
+            # baseline에 해당 context가 없으면 중립 평가
+            return True, 5.0, 0.0
+
+        # 1) pause_sec 평가
+        pause_mean, pause_std = self._get_feature_stats(context_features, "pause_sec")
+        z_pause = self._z_score(pause_sec, pause_mean, pause_std)
+        pause_score = self._center_optimal_score(z_pause, max_score=10.0, z_zero=2.5, z_full=0.5)
+
+        # 2) prev_phrase_duration_sec 평가 (선택적)
+        if "prev_phrase_duration_sec" in context_features:
+            phrase_mean, phrase_std = self._get_feature_stats(context_features, "prev_phrase_duration_sec")
+            z_phrase = self._z_score(prev_phrase_duration_sec, phrase_mean, phrase_std)
+            phrase_score = self._center_optimal_score(z_phrase, max_score=10.0, z_zero=2.5, z_full=0.5)
         else:
-            excess = pause_sec - max_val
-            if excess <= 0.3:
-                return False, 'minor', f"약간 김 (권장: {min_val}-{max_val}초)"
-            elif excess <= 1.0:
-                return False, 'major', f"너무 김 (권장: {min_val}-{max_val}초)"
-            else:
-                return False, 'critical', f"심각하게 김 (권장: {min_val}-{max_val}초)"
+            phrase_score = 10.0
 
-    def evaluate_fluency_score(self, fluency_score: float) -> Tuple[float, List[str], str]:
-        """FluencyScore → 10점 환산"""
-        issues = []
-        level = ""
-
-        if fluency_score >= 95:
-            score = 10.0
-            level = "완벽"
-        elif fluency_score >= 90:
-            score = 9.0
-            level = "우수"
-            issues.append("미세한 유창성 개선 가능")
-        elif fluency_score >= 85:
-            score = 8.0
-            level = "양호"
-            issues.append("일부 끊어읽기 또는 망설임 발견")
-        elif fluency_score >= 80:
-            score = 7.0
-            level = "보통"
-            issues.append("부자연스러운 끊어읽기 주의 필요")
-        elif fluency_score >= 75:
-            score = 5.0
-            level = "미흡"
-            issues.append("전반적인 유창성 개선 필요")
-        elif fluency_score >= 70:
-            score = 3.0
-            level = "불량"
-            issues.append("어절 단위 읽기 또는 반복 다수 발견")
+        # 3) words_since_last_pause 평가 (선택적)
+        if "words_since_last_pause" in context_features:
+            words_mean, words_std = self._get_feature_stats(context_features, "words_since_last_pause")
+            z_words = self._z_score(float(words_since_last_pause), words_mean, words_std)
+            words_score = self._center_optimal_score(z_words, max_score=10.0, z_zero=2.5, z_full=0.5)
         else:
-            score = 1.0
-            level = "매우 불량"
-            issues.append("기내방송 수준 미달 - 전면 재연습 필요")
+            words_score = 10.0
 
-        return score, issues, level
+        # 종합 점수 (가중 평균) - 개별 pause의 점수
+        pause_total_score = (
+            0.6 * pause_score +      # pause 길이가 가장 중요
+            0.2 * phrase_score +     # 발화 길이
+            0.2 * words_score        # 단어 수
+        )
 
-    def analyze(self, wav_path: str, azure_data: Dict = None, reference_script: str = None) -> Dict:
+        is_good = self.is_good_pause(context)
+        return is_good, pause_total_score, z_pause
+
+
+    def analyze(
+        self,
+        wav_path: str,
+        azure_data: Dict = None,
+        reference_script: str = None,
+        validation_result: Dict = None,
+        language_code: str = "ko-KR",
+        baseline_path: Path = DEFAULT_PAUSE_BASELINE_PATH,
+        weight_fluency: float = 0.7,
+        weight_position: float = 0.2,
+        weight_length: float = 0.1
+    ) -> Dict:
         """
         Pause 분석 수행
 
         Args:
             wav_path: WAV 파일 경로
-            azure_data: Azure 분석 결과 (Pronunciation 에이전트에서 받음)
+            azure_data: Azure 분석 결과 (단어별 상세용)
             reference_script: 참조 스크립트
+            validation_result: Validate 에이전트의 결과 (가중 평균 FluencyScore 포함)
+            language_code: 언어 코드 (기본값: ko-KR)
+            baseline_path: Baseline JSON 파일 경로
 
         Returns:
             분석 결과 딕셔너리
         """
         try:
+            # Baseline 로드
+            self._ensure_baseline_loaded(baseline_path)
             if not azure_data or 'NBest' not in azure_data or len(azure_data['NBest']) == 0:
                 return {
                     "score": 0,
@@ -181,23 +354,25 @@ class PauseAnalyzer:
 
             nbest = azure_data['NBest'][0]
 
-            # 1차 평가: FluencyScore
-            pron_assessment = nbest.get('PronunciationAssessment', {})
-            fluency_score = pron_assessment.get('FluencyScore', 0)
-            fluency_converted, fluency_issues, fluency_level = self.evaluate_fluency_score(fluency_score)
+            # 1차 평가: FluencyScore (Validate의 가중 평균 사용)
+            if validation_result:
+                # ✅ Validate에서 계산한 가중 평균 FluencyScore 사용 (전체 세그먼트 반영)
+                fluency_score = validation_result.get('fluency_score', 0)
+            else:
+                # Fallback: azure_data 사용 (첫 세그먼트만 - 부정확)
+                pron_assessment = nbest.get('PronunciationAssessment', {})
+                fluency_score = pron_assessment.get('FluencyScore', 0)
 
             # 참조 스크립트가 없으면 기본 분석만 수행
             if not reference_script:
                 return {
-                    "score": fluency_converted * 10,  # 100점 만점으로 환산
+                    "score": round(fluency_score, 2),  # 100점 만점 그대로 사용
                     "max_score": 100,
                     "feedback": [
-                        f"유창성 점수: {fluency_converted:.1f} / 10.0",
-                        f"수준: {fluency_level}"
-                    ] + fluency_issues,
+                        f"유창성 점수: {fluency_score:.1f} / 100.0"
+                    ],
                     "status": "success",
-                    "fluency_score": fluency_converted,
-                    "fluency_level": fluency_level
+                    "fluency_score": fluency_score
                 }
 
             # 정답 스크립트의 문장부호 위치 추출
@@ -213,11 +388,16 @@ class PauseAnalyzer:
             pause_details = []
             good_pauses = 0
             bad_pauses = 0
-            perfect_pauses = 0
-            acceptable_pauses = 0
-            minor_issues = 0
-            major_issues = 0
-            critical_issues = 0
+
+            # 새로운 feature 추적 변수
+            prev_phrase_start_time = 0.0  # 직전 pause 이후 시작 시간
+            words_since_last_pause = 0    # 직전 pause 이후 단어 수
+
+            # Baseline에서 최소 pause 임계값 가져오기
+            min_pause_threshold = self._get_min_pause_threshold(language_code)
+
+            # Baseline에서 mid_phrase_breath 판단 기준 가져오기
+            min_breath_duration, min_breath_words = self._get_mid_phrase_breath_criteria(language_code)
 
             for i, word in enumerate(words):
                 word_text = word.get('Word', '')
@@ -228,120 +408,148 @@ class PauseAnalyzer:
                 duration_sec = duration / 1000000
                 end_time = start_time + duration_sec
 
+                # 단어 카운트 증가
+                words_since_last_pause += 1
+
                 if i < len(words) - 1:
                     next_word = words[i + 1]
                     next_offset = next_word.get('Offset', 0)
                     next_start = next_offset / 1000000
                     pause_sec = next_start - end_time
 
-                    if pause_sec >= self.MIN_PAUSE_THRESHOLD:
+                    if pause_sec >= min_pause_threshold:
+                        # Feature 3: prev_phrase_duration_sec 계산
+                        prev_phrase_duration_sec = end_time - prev_phrase_start_time
+
                         script_word_idx = min(i, total_reference_words - 1)
                         context = self.classify_pause_context(script_word_idx, punctuation_positions)
-                        is_good = self.is_good_pause(context)
-                        length_appropriate, severity, length_comment = self.evaluate_pause_length(pause_sec, context)
+
+                        # context 세분화: mid_phrase_breath 판단 (baseline 기반)
+                        if context == 'mid_phrase':
+                            # baseline에서 가져온 임계값 사용
+                            if min_breath_duration is not None and min_breath_words is not None:
+                                if prev_phrase_duration_sec >= min_breath_duration or words_since_last_pause >= min_breath_words:
+                                    context = 'mid_phrase_breath'
+                            elif min_breath_duration is not None:
+                                if prev_phrase_duration_sec >= min_breath_duration:
+                                    context = 'mid_phrase_breath'
+                            elif min_breath_words is not None:
+                                if words_since_last_pause >= min_breath_words:
+                                    context = 'mid_phrase_breath'
+
+                        # Baseline 기반 평가
+                        is_good, pause_total_score, z_pause = self.evaluate_pause_with_baseline(
+                            pause_sec=pause_sec,
+                            context=context,
+                            prev_phrase_duration_sec=prev_phrase_duration_sec,
+                            words_since_last_pause=words_since_last_pause,
+                            language_code=language_code,
+                        )
 
                         if is_good:
                             good_pauses += 1
-                            if severity == 'perfect':
-                                perfect_pauses += 1
-                            elif severity == 'acceptable':
-                                acceptable_pauses += 1
-                            elif severity == 'minor':
-                                minor_issues += 1
-                            elif severity == 'major':
-                                major_issues += 1
                         else:
                             bad_pauses += 1
-                            if pause_sec > 0.5:
-                                critical_issues += 1
-                            else:
-                                major_issues += 1
 
                         pause_details.append({
                             'word_index': i + 1,
                             'after_word': word_text,
                             'pause_sec': round(pause_sec, 3),
                             'context': context,
+                            'prev_phrase_duration_sec': round(prev_phrase_duration_sec, 3),
+                            'words_since_last_pause': words_since_last_pause,
                             'is_good': is_good,
-                            'severity': severity,
-                            'comment': length_comment if is_good else "[X] 부적절한 위치"
+                            'pause_total_score': round(pause_total_score, 2),
+                            'z_pause': round(z_pause, 2)
                         })
 
-            # 2차 평가: Pause 위치 점수
+                        # 다음 phrase를 위한 초기화
+                        prev_phrase_start_time = next_start
+                        words_since_last_pause = 0
+
+            # 2차 평가: Pause 위치 점수 (z-score 기반)
             total_pauses = good_pauses + bad_pauses
             if total_pauses > 0:
                 good_pause_ratio = good_pauses / total_pauses
-                if good_pause_ratio >= 0.95:
+
+                # Baseline에서 통계 가져오기
+                ratio_mean, ratio_std = self._get_good_pause_ratio_stats(language_code)
+
+                if ratio_mean is not None and ratio_std is not None:
+                    # z-score 계산 및 점수 변환
+                    z = self._z_score(good_pause_ratio, ratio_mean, ratio_std)
+                    # 높을수록 좋은 지표이므로 higher_is_better 사용
+                    position_score = self._higher_is_better_score(z, max_score=10.0, z_zero=-2.5, z_full=0.5)
+                else:
+                    # baseline 통계가 없으면 중립 점수
                     position_score = 5.0
-                elif good_pause_ratio >= 0.90:
-                    position_score = 4.5
-                elif good_pause_ratio >= 0.85:
-                    position_score = 4.0
-                elif good_pause_ratio >= 0.80:
-                    position_score = 3.5
-                elif good_pause_ratio >= 0.75:
-                    position_score = 3.0
-                else:
-                    position_score = 2.0
             else:
-                position_score = 5.0
+                position_score = 10.0
                 good_pause_ratio = 1.0
-
-            # Pause 길이 점수
-            if good_pauses > 0:
-                perfect_ratio = perfect_pauses / good_pauses
-                good_ratio = (perfect_pauses + acceptable_pauses + minor_issues) / good_pauses
-
-                if perfect_ratio >= 0.80:
-                    length_score = 5.0
-                elif perfect_ratio >= 0.60:
-                    length_score = 4.5
-                elif good_ratio >= 0.90:
-                    length_score = 4.0
-                elif good_ratio >= 0.80:
-                    length_score = 3.5
-                else:
-                    length_score = 3.0
-
-                major_ratio = major_issues / good_pauses if good_pauses > 0 else 0
-                if critical_issues >= good_pauses * 0.3:
-                    length_score = max(1.0, length_score - 2.0)
-                elif critical_issues > 0:
-                    length_score = max(1.0, length_score - 1.0)
-
-                if major_ratio >= 0.30:
-                    length_score = max(1.0, length_score - 1.5)
-                elif major_ratio >= 0.10:
-                    length_score = max(1.0, length_score - 1.0)
-            else:
+# ============================================================================================================
+            # # 3차 평가: Pause 길이 점수 (good pause들의 pause_total_score 평균)
+            # if total_pauses == 0:
+            #     # pause가 아예 없는 경우 (매우 빠르게 말함)
+            #     length_score = 5.0
+            # elif good_pauses > 0:
+            #     # good pause가 있는 경우: pause_total_score 평균 사용
+            #     good_pause_scores = [p['pause_total_score'] for p in pause_details if p['is_good']]
+            #     avg_pause_score = sum(good_pause_scores) / len(good_pause_scores)
+            #     length_score = avg_pause_score / 2.0  # 0-5점 스케일
+            # else:
+            #     # total_pauses > 0이지만 good_pauses == 0 (모두 bad pause)
+            #     length_score = 0.0
+            
+            # 3차 평가: Pause 길이 점수 (good pause들의 pause_total_score 평균, outlier 완화)
+            if total_pauses == 0:
+                # pause가 아예 없는 경우 (매우 빠르게 말함)
                 length_score = 5.0
+            elif good_pauses > 0:
+                # good pause 중에서 outlier(너무 긴/짧은) 제거를 고려
+                good_pauses_list = [p for p in pause_details if p['is_good']]
 
-            # 총점 계산 (20점 만점)
-            total_score = fluency_converted + position_score + length_score
+                # 1차 후보: |z_pause| <= 3.0 인 것만 사용 (baseline에서 3σ 안쪽)
+                inlier_scores = [
+                    p['pause_total_score']
+                    for p in good_pauses_list
+                    if abs(p.get('z_pause', 0.0)) <= 3.0
+                ]
+
+                # 만약 전부 outlier로 빠져서 비어버리면 → 전체 good pause로 다시 계산
+                if not inlier_scores:
+                    inlier_scores = [p['pause_total_score'] for p in good_pauses_list]
+
+                avg_pause_score = sum(inlier_scores) / len(inlier_scores)
+                length_score = avg_pause_score / 2.0  # 0-5점 스케일
+            else:
+                # total_pauses > 0이지만 good_pauses == 0 (모두 bad pause)
+                length_score = 0.0
+# ============================================================================================================
+
+            # 총점 계산 (100점 만점)
+            # fluency_score(0-100) + position_score(0-10) + length_score(0-5)를 100점 만점으로 통합
+            total_score = (
+                fluency_score * weight_fluency +           # 유창성
+                position_score * 10 * weight_position +    # pause 위치 (10점 → 100점 스케일)
+                length_score * 20 * weight_length          # pause 길이 (5점 → 100점 스케일)
+            )
 
             # 피드백 생성
             feedback = [
-                f"유창성: {fluency_converted:.1f}/10.0점 ({fluency_level})",
-                f"Pause 위치: {position_score:.1f}/5.0점 (적절한 위치: {good_pauses}/{total_pauses})",
+                f"유창성: {fluency_score:.1f}/100.0점",
+                f"Pause 위치: {position_score:.1f}/10.0점 (적절한 위치: {good_pauses}/{total_pauses})",
                 f"Pause 길이: {length_score:.1f}/5.0점"
             ]
 
             if bad_pauses > 0:
                 feedback.append(f"부적절한 위치 pause: {bad_pauses}개")
-            if major_issues > 0:
-                feedback.append(f"주요 문제: {major_issues}개")
-            if critical_issues > 0:
-                feedback.append(f"심각한 문제: {critical_issues}개")
-
-            # 20점을 100점 만점으로 환산
-            normalized_score = (total_score / 20) * 100
 
             return {
-                "score": round(normalized_score, 2),
+                "score": round(total_score, 2),
                 "max_score": 100,
                 "feedback": feedback,
                 "status": "success",
-                "fluency_score": fluency_converted,
+                "fluency_score": fluency_score,
                 "position_score": position_score,
                 "length_score": length_score,
                 "total_pauses": total_pauses,
@@ -357,10 +565,3 @@ class PauseAnalyzer:
                 "feedback": [f"분석 중 오류 발생: {str(e)}"],
                 "status": "error"
             }
-
-
-if __name__ == "__main__":
-    # 테스트 코드
-    analyzer = PauseAnalyzer()
-    result = analyzer.analyze("test.wav")
-    print(json.dumps(result, ensure_ascii=False, indent=2))
