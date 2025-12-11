@@ -5,7 +5,7 @@ Azure Pronunciation Assessment를 사용하여 데이터 생성
 Pronunciation과 Pause 에이전트에서 재사용 가능
 
 검증 항목:
-- Completeness: 스크립트 단어를 얼마나 말했는가 (중복 포함, 85% 이상 필요)
+- Completeness: 스크립트 단어를 얼마나 말했는가 (중복 포함, 90% 이상 필요)
 - Text Similarity: 스크립트와 얼마나 일치하는가 (SequenceMatcher 기반, 90% 이상 필요)
 - 발음 품질은 검증하지 않음 (Pronunciation 에이전트에서 별도 평가)
 
@@ -30,7 +30,7 @@ class ValidateAnalyzer:
     """스크립트 검증 분석기"""
 
     # 검증 임계값 (내용 일치 여부만 검증, 발음은 Pronunciation 에이전트에서 평가)
-    COMPLETENESS_THRESHOLD = 85.0  # 완전성 임계값 (스크립트의 85% 이상 말해야 통과)
+    COMPLETENESS_THRESHOLD = 90.0  # 완전성 임계값 (스크립트의 90% 이상 말해야 통과)
     SIMILARITY_THRESHOLD = 0.9     # 텍스트 유사도 임계값 (90% 이상 일치해야 통과)
 
     def __init__(self):
@@ -289,7 +289,7 @@ class ValidateAnalyzer:
         """
         음성 내용 검증 실시 (발음은 검증하지 않음)
 
-        적합 조건: Completeness >= 85% AND Similarity >= 90%
+        적합 조건: Completeness >= 90% AND Similarity >= 90%
 
         Returns:
             검증 결과 딕셔너리 (is_valid, warnings, feedback)
@@ -309,28 +309,32 @@ class ValidateAnalyzer:
         if completeness_score < self.COMPLETENESS_THRESHOLD:
             is_valid = False  # 임계값 미만이면 무조건 부적합
             warnings.append("completeness")
-            feedback.append(
-                f"문장 재현율: {completeness_score:.1f}% (기준: {self.COMPLETENESS_THRESHOLD}% 미만)"
-            )
 
         # 2. 텍스트 유사도 검사 (스크립트와 다른 내용을 말했나)
         if text_similarity < self.SIMILARITY_THRESHOLD:
             is_valid = False  # 임계값 미만이면 무조건 부적합
             warnings.append("text_mismatch")
-            feedback.append(
-                f"내용 일치도: {text_similarity*100:.1f}% (기준: {self.SIMILARITY_THRESHOLD*100}% 미만)"
-            )
 
         # 3. 인식된 텍스트가 비어있는 경우
         if not recognized_text.strip():
             is_valid = False
             warnings.append("no_speech")
             feedback.append("음성 인식 실패")
+        else:
+            # 음성 인식이 성공한 경우, 항상 두 점수를 모두 표시 (적합/부적합 여부와 관계없이)
+            # Completeness 피드백
+            if completeness_score >= self.COMPLETENESS_THRESHOLD:
+                completeness_feedback = f"문장 재현율: {completeness_score:.1f}% (기준: {self.COMPLETENESS_THRESHOLD}% 이상)"
+            else:
+                completeness_feedback = f"문장 재현율: {completeness_score:.1f}% (기준: {self.COMPLETENESS_THRESHOLD}% 미만)"
+            feedback.append(completeness_feedback)
 
-        # 정상 경우 (두 지표 모두 임계값 이상)
-        if is_valid and not warnings:
-            feedback.append(f"문장 재현율: {completeness_score:.1f}%")
-            feedback.append(f"내용 일치도: {text_similarity*100:.1f}%")
+            # Similarity 피드백
+            if text_similarity >= self.SIMILARITY_THRESHOLD:
+                similarity_feedback = f"내용 일치도: {text_similarity*100:.1f}% (기준: {self.SIMILARITY_THRESHOLD*100}% 이상)"
+            else:
+                similarity_feedback = f"내용 일치도: {text_similarity*100:.1f}% (기준: {self.SIMILARITY_THRESHOLD*100}% 미만)"
+            feedback.append(similarity_feedback)
 
         return {
             "is_valid": is_valid,
@@ -386,14 +390,3 @@ class ValidateAnalyzer:
                 "status": "error",
                 "azure_data": None
             }
-
-
-if __name__ == "__main__":
-    # 테스트 코드
-    analyzer = ValidateAnalyzer()
-    result = analyzer.analyze(
-        "test.wav",
-        reference_text="안녕하세요 테스트입니다",
-        language_code="ko-KR"
-    )
-    print(json.dumps(result, ensure_ascii=False, indent=2))

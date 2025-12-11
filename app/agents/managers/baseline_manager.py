@@ -9,21 +9,29 @@ from pathlib import Path
 from typing import Dict, Any, List
 from datetime import datetime
 import logging
-
+from app.agents.analyzers import (
+    IntonationAnalyzer,
+    ToneAnalyzer,
+    SpeedAnalyzer,
+    PauseAnalyzer
+)
 
 class BaselineManager:
     """Baseline 관리자"""
 
-    def __init__(self, baseline_dir: str = "app/agents/baselines"):
+    def __init__(self, baseline_dir: str = "baselines"):
         """
         Args:
             baseline_dir: Baseline 저장 디렉토리
         """
-        self.baseline_dir = Path(baseline_dir)
-        self.baseline_dir.mkdir(exist_ok=True)
+        # 현재 파일(app/agents/managers/baseline_manager.py) 기준으로
+        # app/agents/baselines 설정
+        self.baseline_dir = Path(__file__).parent.parent / "baselines"
+        self.baseline_dir.mkdir(exist_ok=True, parents=True)
 
-        # 샘플 음성 디렉토리
-        self.sample_dir = Path("app/agents/sample")
+        # 샘플 음성 디렉토리: app/agents/sample
+        self.sample_dir = Path(__file__).parent.parent / "sample"
+        self.sample_dir.mkdir(exist_ok=True, parents=True)
 
         self.logger = self._setup_logger()
 
@@ -208,8 +216,6 @@ class BaselineManager:
         - 각 (gender, language) 그룹별로 6개 feature의 mean/std 계산
         - tone.py에서 사용하는 스키마로 JSON 저장
         """
-        from app.agents.analyzers.tone import ToneAnalyzer  # 순환 import 방지용 지연 import
-
         # 1) 샘플 디렉토리 결정
         if sample_dir is None:
             sample_dir = self.sample_dir
@@ -218,9 +224,9 @@ class BaselineManager:
             self.logger.error(f"tone 샘플 디렉토리를 찾을 수 없습니다: {sample_dir}")
             return {}
 
-        # 2) 오디오 파일 수집
-        wav_files = list(sample_dir.rglob("*.wav"))
-        mp3_files = list(sample_dir.rglob("*.mp3"))
+        # 2) 오디오 파일 수집 (정렬하여 순서 일정화)
+        wav_files = sorted(list(sample_dir.rglob("*.wav")))
+        mp3_files = sorted(list(sample_dir.rglob("*.mp3")))
         audio_files = wav_files + mp3_files
 
         if not audio_files:
@@ -278,7 +284,7 @@ class BaselineManager:
                     "std": std_val,
                 }
 
-        # 5) 파일로 저장 (tone.py가 읽는 경로와 동일한 baselines 디렉토리)
+        # 5) 파일로 저장
         output_path = self.baseline_dir / output_filename
 
         try:
@@ -316,9 +322,9 @@ class BaselineManager:
             self.logger.error(f"speed 샘플 디렉토리를 찾을 수 없습니다: {sample_dir}")
             return {}
 
-        # 2) 오디오 파일 수집
-        wav_files = list(sample_dir.rglob("*.wav"))
-        mp3_files = list(sample_dir.rglob("*.mp3"))
+        # 2) 오디오 파일 수집 (정렬하여 순서 일정화)
+        wav_files = sorted(list(sample_dir.rglob("*.wav")))
+        mp3_files = sorted(list(sample_dir.rglob("*.mp3")))
         audio_files = wav_files + mp3_files
 
         if not audio_files:
@@ -432,13 +438,426 @@ class BaselineManager:
 
         return baseline
 
+    def preprocess_samples_for_pause(
+        self,
+        sample_dir: Path | None = None,
+        pause_reference_dir: Path | None = None,
+    ) -> int:
+        """
+        샘플 음성 파일에 대한 Azure 분석 결과 생성
+        Pause baseline 생성을 위한 전처리
+
+        Args:
+            sample_dir: 샘플 WAV 파일 디렉토리
+            pause_reference_dir: TXT 스크립트와 JSON 결과를 함께 저장하는 디렉토리
+
+        Returns:
+            처리된 파일 수
+        """
+        import os
+        import azure.cognitiveservices.speech as speechsdk
+        from dotenv import load_dotenv
+
+        # 환경변수 로드
+        load_dotenv()
+
+        # Azure 설정
+        AZURE_SPEECH_KEY = os.getenv("AZURE_SPEECH_KEY")
+        AZURE_SPEECH_REGION = os.getenv("AZURE_SPEECH_REGION")
+
+        if not AZURE_SPEECH_KEY or not AZURE_SPEECH_REGION:
+            self.logger.error("Azure Speech credentials not found. Check .env file.")
+            return 0
+
+        # 디렉토리 설정
+        if sample_dir is None:
+            sample_dir = self.sample_dir
+        if pause_reference_dir is None:
+            # 기본값: baselines/pause_reference
+            pause_reference_dir = self.baseline_dir / "pause_reference"
+
+        pause_reference_dir.mkdir(exist_ok=True)
+
+        # WAV 파일 수집
+        wav_files = sorted(sample_dir.glob("*.wav"))
+        if not wav_files:
+            self.logger.error(f"{sample_dir}에 WAV 파일이 없습니다.")
+            return 0
+
+        self.logger.info(f"🎤 {len(wav_files)}개 샘플 파일 전처리 시작")
+        self.logger.info(f"📁 출력 디렉토리: {pause_reference_dir}")
+
+        success_count = 0
+        skip_count = 0
+        error_count = 0
+
+        for wav_path in wav_files:
+            try:
+                # 출력 파일 경로 (pause_reference 폴더에 JSON과 TXT 함께 저장)
+                json_path = pause_reference_dir / f"{wav_path.stem}.json"
+                txt_path = pause_reference_dir / f"{wav_path.stem}.txt"
+
+                # 이미 처리된 파일은 건너뛰기 (JSON만 확인, TXT는 이미 있음)
+                if json_path.exists():
+                    self.logger.info(f"⏭️  건너뜀: {wav_path.name}")
+                    skip_count += 1
+                    continue
+
+                self.logger.info(f"처리 중: {wav_path.name}")
+
+                # 파일명에서 언어 추출
+                _, language = self._parse_gender_language_from_filename(wav_path)
+                self.logger.info(f"  언어: {language}")
+
+                # Azure Speech Config 설정
+                speech_config = speechsdk.SpeechConfig(
+                    subscription=AZURE_SPEECH_KEY,
+                    region=AZURE_SPEECH_REGION
+                )
+                speech_config.speech_recognition_language = language
+
+                # 오디오 설정
+                audio_config = speechsdk.audio.AudioConfig(filename=str(wav_path))
+
+                # Pronunciation Assessment 설정
+                pronunciation_config = speechsdk.PronunciationAssessmentConfig(
+                    reference_text="",
+                    grading_system=speechsdk.PronunciationAssessmentGradingSystem.HundredMark,
+                    granularity=speechsdk.PronunciationAssessmentGranularity.Phoneme,
+                    enable_miscue=False
+                )
+                pronunciation_config.enable_prosody_assessment()
+
+                # Speech Recognizer 생성
+                speech_recognizer = speechsdk.SpeechRecognizer(
+                    speech_config=speech_config,
+                    audio_config=audio_config
+                )
+                pronunciation_config.apply_to(speech_recognizer)
+
+                # 인식 수행
+                self.logger.info("  Azure API 호출 중...")
+                result = speech_recognizer.recognize_once()
+
+                if result.reason == speechsdk.ResultReason.RecognizedSpeech:
+                    # JSON 결과 파싱
+                    result_json = json.loads(result.json)
+
+                    # JSON 저장
+                    with open(json_path, 'w', encoding='utf-8') as f:
+                        json.dump(result_json, f, ensure_ascii=False, indent=2)
+                    self.logger.info(f"  💾 JSON 저장: {json_path.name}")
+
+                    # Reference script 확인 (같은 폴더에 이미 TXT 있어야 함)
+                    if txt_path.exists():
+                        with open(txt_path, 'r', encoding='utf-8') as f:
+                            reference_text = f.read().strip()
+                        self.logger.info(f"  📄 원본 스크립트 확인: {txt_path.name}")
+                        self.logger.info(f"  ✅ 인식 성공: {reference_text}")
+                    else:
+                        self.logger.warning(f"  ⚠️  원본 스크립트 없음: {txt_path.name}")
+                        self.logger.warning(f"  baseline 생성 시 context 분류가 부정확할 수 있습니다.")
+
+                    success_count += 1
+
+                elif result.reason == speechsdk.ResultReason.NoMatch:
+                    self.logger.error(f"  ❌ 음성 인식 실패")
+                    error_count += 1
+
+                elif result.reason == speechsdk.ResultReason.Canceled:
+                    cancellation = result.cancellation_details
+                    self.logger.error(f"  ❌ 취소됨: {cancellation.reason}")
+                    if cancellation.reason == speechsdk.CancellationReason.Error:
+                        self.logger.error(f"  오류 상세: {cancellation.error_details}")
+                    error_count += 1
+
+            except Exception as e:
+                self.logger.error(f"  ❌ 오류 발생: {e}")
+                error_count += 1
+
+        self.logger.info("\n" + "=" * 80)
+        self.logger.info("📊 전처리 완료")
+        self.logger.info(f"  ✅ 성공: {success_count}개")
+        self.logger.info(f"  ⏭️  건너뜀: {skip_count}개")
+        self.logger.info(f"  ❌ 실패: {error_count}개")
+
+        return success_count
+
+    def generate_pause_baseline_from_samples(
+        self,
+        sample_dir: Path | None = None,
+        pause_reference_dir: Path | None = None,
+        output_filename: str = "pause_default.json",
+        auto_preprocess: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        pause 에이전트용 baseline(pause_default.json)을 생성한다.
+
+        - pause_reference_dir 아래의 JSON 파일과 TXT 파일을 스캔
+        - Azure 분석 결과에서 pause 데이터 추출
+        - 언어별, context별로 feature의 mean/std 계산
+        - min_pause_threshold는 전체 pause_sec의 하위 5% 퍼센타일로 설정
+
+        Args:
+            sample_dir: 샘플 WAV 파일 디렉토리
+            pause_reference_dir: TXT 스크립트와 JSON 결과를 함께 저장하는 디렉토리
+            output_filename: 출력 baseline 파일명
+            auto_preprocess: JSON 파일이 없으면 자동으로 전처리 수행 (기본값: True)
+        """
+        # 1) pause_reference 디렉토리 결정
+        if pause_reference_dir is None:
+            # 기본값: baselines/pause_reference
+            pause_reference_dir = self.baseline_dir / "pause_reference"
+
+        # 2) JSON 파일 수집
+        json_files = list(pause_reference_dir.glob("*.json")) if pause_reference_dir.exists() else []
+
+        # 3) JSON 파일이 없으면 전처리 수행
+        if not json_files and auto_preprocess:
+            self.logger.info("pause_reference 디렉토리에 JSON 파일이 없습니다. 자동 전처리를 시작합니다...")
+            processed_count = self.preprocess_samples_for_pause(sample_dir, pause_reference_dir)
+
+            if processed_count == 0:
+                self.logger.error("전처리 실패: JSON 파일을 생성할 수 없습니다.")
+                return {}
+
+            # 전처리 후 다시 JSON 파일 수집
+            json_files = list(pause_reference_dir.glob("*.json"))
+
+        if not json_files:
+            self.logger.error(f"pause_reference 디렉토리에 JSON 파일이 없습니다: {pause_reference_dir}")
+            self.logger.info("샘플 전처리를 먼저 수행하세요: manager.preprocess_samples_for_pause()")
+            return {}
+
+        self.logger.info(f"pause: {len(json_files)}개 JSON 파일에서 baseline 생성 시작")
+
+        # 3) 언어별, context별 feature 집계용 구조
+        # grouped_data[language][context][feature_name] = [값1, 값2, ...]
+        grouped_data: Dict[str, Dict[str, Dict[str, List[float]]]] = {}
+        all_pause_secs: Dict[str, List[float]] = {}  # 언어별 모든 pause_sec 값
+
+        # mid_phrase_breath criteria 계산용 (mid_phrase 중에서 breath로 판단된 케이스)
+        mid_phrase_breath_candidates: Dict[str, Dict[str, List[float]]] = {}
+
+        # good_pause_ratio 계산용 (파일별 good pause 비율)
+        good_pause_ratios: Dict[str, List[float]] = {}
+
+        for json_path in json_files:
+            try:
+                # Reference script 파일 경로
+                txt_path = json_path.with_suffix('.txt')
+                if not txt_path.exists():
+                    self.logger.warning(f"Reference script 없음: {txt_path.name}")
+                    # txt 파일 없이도 진행 가능 (context 분류가 부정확할 뿐)
+
+                # JSON 데이터 로드
+                with open(json_path, 'r', encoding='utf-8') as f:
+                    azure_data = json.load(f)
+
+                # Reference script 로드 (있으면)
+                reference_script = None
+                if txt_path.exists():
+                    with open(txt_path, 'r', encoding='utf-8') as f:
+                        reference_script = f.read().strip()
+
+                # 파일명에서 언어 추출
+                _, language = self._parse_gender_language_from_filename(json_path)
+
+                # pause 데이터 추출 (Azure NBest[0].Words 사용)
+                if 'NBest' not in azure_data or len(azure_data['NBest']) == 0:
+                    self.logger.warning(f"Azure 데이터 없음: {json_path.name}")
+                    continue
+
+                words = azure_data['NBest'][0].get('Words', [])
+
+                # Reference script에서 문장부호 위치 추출 (있으면)
+                punctuation_positions = None
+                if reference_script:
+                    analyzer = PauseAnalyzer()
+                    punctuation_positions = analyzer.extract_punctuation_positions(reference_script)
+
+                # Pause 분석 (pause.py의 로직 재사용)
+                prev_phrase_start_time = 0.0
+                words_since_last_pause = 0
+
+                # 파일별 good/bad pause 카운트
+                file_good_pauses = 0
+                file_bad_pauses = 0
+
+                for i, word in enumerate(words):
+                    offset = word.get('Offset', 0)
+                    duration = word.get('Duration', 0)
+
+                    start_time = offset / 1000000
+                    duration_sec = duration / 1000000
+                    end_time = start_time + duration_sec
+
+                    words_since_last_pause += 1
+
+                    if i < len(words) - 1:
+                        next_word = words[i + 1]
+                        next_offset = next_word.get('Offset', 0)
+                        next_start = next_offset / 1000000
+                        pause_sec = next_start - end_time
+
+                        if pause_sec >= 0.05:  # 임시 최소값 (나중에 baseline으로 대체됨)
+                            prev_phrase_duration_sec = end_time - prev_phrase_start_time
+
+                            # Context 분류
+                            if punctuation_positions:
+                                # Reference script 있으면 정확한 분류
+                                analyzer = PauseAnalyzer()
+                                context = analyzer.classify_pause_context(i, punctuation_positions)
+
+                                # mid_phrase인 경우 breath 여부 판단
+                                if context == 'mid_phrase':
+                                    if prev_phrase_duration_sec >= 3.0 or words_since_last_pause >= 10:
+                                        context = 'mid_phrase_breath'
+                            else:
+                                # Reference script 없으면 추정
+                                if pause_sec >= 0.4:
+                                    context = 'after_period'
+                                elif pause_sec >= 0.2:
+                                    context = 'after_comma'
+                                elif prev_phrase_duration_sec >= 3.0 or words_since_last_pause >= 10:
+                                    context = 'mid_phrase_breath'
+                                else:
+                                    context = 'mid_phrase'
+
+                            # good/bad pause 카운트 (mid_phrase는 bad, 나머지는 good)
+                            if context == 'mid_phrase':
+                                file_bad_pauses += 1
+                            else:
+                                file_good_pauses += 1
+
+                            # 언어별 데이터 구조 초기화
+                            if language not in grouped_data:
+                                grouped_data[language] = {}
+                                all_pause_secs[language] = []
+
+                            if context not in grouped_data[language]:
+                                grouped_data[language][context] = {
+                                    'pause_sec': [],
+                                    'prev_phrase_duration_sec': [],
+                                    'words_since_last_pause': []
+                                }
+
+                            # 데이터 추가
+                            grouped_data[language][context]['pause_sec'].append(pause_sec)
+                            grouped_data[language][context]['prev_phrase_duration_sec'].append(prev_phrase_duration_sec)
+                            grouped_data[language][context]['words_since_last_pause'].append(float(words_since_last_pause))
+
+                            # 전체 pause_sec도 저장 (min_pause_threshold 계산용)
+                            all_pause_secs[language].append(pause_sec)
+
+                            # mid_phrase_breath로 분류된 케이스 수집 (criteria 계산용)
+                            if context == 'mid_phrase_breath':
+                                if language not in mid_phrase_breath_candidates:
+                                    mid_phrase_breath_candidates[language] = {
+                                        'prev_phrase_duration_sec': [],
+                                        'words_since_last_pause': []
+                                    }
+                                mid_phrase_breath_candidates[language]['prev_phrase_duration_sec'].append(prev_phrase_duration_sec)
+                                mid_phrase_breath_candidates[language]['words_since_last_pause'].append(float(words_since_last_pause))
+
+                            # 다음 phrase 초기화
+                            prev_phrase_start_time = next_start
+                            words_since_last_pause = 0
+
+                # 파일별 good_pause_ratio 계산 및 저장
+                total_pauses = file_good_pauses + file_bad_pauses
+                if total_pauses > 0:
+                    ratio = file_good_pauses / total_pauses
+                    if language not in good_pause_ratios:
+                        good_pause_ratios[language] = []
+                    good_pause_ratios[language].append(ratio)
+                    self.logger.info(f"[pause] {json_path.name} → language={language}, good_ratio={ratio:.2f}")
+                else:
+                    self.logger.info(f"[pause] {json_path.name} → language={language}, good_ratio=0.00 (no pauses)")
+
+            except Exception as e:
+                self.logger.error(f"[pause] JSON 처리 중 오류 ({json_path.name}): {e}")
+
+        # 4) mean/std 계산 및 baseline 구조 생성
+        baseline: Dict[str, Any] = {
+            "agent": "pause",
+            "created_at": datetime.now().isoformat(),
+            "languages": {}
+        }
+
+        for language, contexts in grouped_data.items():
+            # min_pause_threshold 계산 (하위 5% 퍼센타일)
+            if language in all_pause_secs and len(all_pause_secs[language]) > 0:
+                min_threshold = float(np.percentile(all_pause_secs[language], 5))
+            else:
+                min_threshold = 0.15  # Fallback
+
+            # mid_phrase_breath_criteria 계산 (25th percentile)
+            # mid_phrase_breath로 분류된 케이스들의 하위 25% 값을 임계값으로 사용
+            breath_criteria = {}
+            if language in mid_phrase_breath_candidates:
+                candidates = mid_phrase_breath_candidates[language]
+
+                if len(candidates['prev_phrase_duration_sec']) > 0:
+                    min_duration = float(np.percentile(candidates['prev_phrase_duration_sec'], 25))
+                    breath_criteria['min_prev_phrase_duration_sec'] = round(min_duration, 3)
+
+                if len(candidates['words_since_last_pause']) > 0:
+                    min_words = float(np.percentile(candidates['words_since_last_pause'], 25))
+                    breath_criteria['min_words_since_last_pause'] = int(round(min_words))
+
+            # good_pause_ratio 통계 계산 (mean/std)
+            good_ratio_stats = {}
+            if language in good_pause_ratios and len(good_pause_ratios[language]) > 0:
+                ratios = np.array(good_pause_ratios[language], dtype=float)
+                good_ratio_stats = {
+                    "mean": round(float(ratios.mean()), 3),
+                    "std": round(float(ratios.std(ddof=0)), 3)
+                }
+
+            lang_block = {
+                "min_pause_threshold": round(min_threshold, 3),
+                "mid_phrase_breath_criteria": breath_criteria if breath_criteria else None,
+                "good_pause_ratio": good_ratio_stats if good_ratio_stats else None,
+                "contexts": {}
+            }
+
+            for context, features in contexts.items():
+                context_block = {"features": {}}
+
+                for feature_name, values in features.items():
+                    if len(values) > 0:
+                        arr = np.array(values, dtype=float)
+                        mean_val = float(arr.mean())
+                        std_val = float(arr.std(ddof=0))  # 모집단 표준편차
+
+                        context_block["features"][feature_name] = {
+                            "mean": round(mean_val, 3),
+                            "std": round(std_val, 3),
+                        }
+
+                lang_block["contexts"][context] = context_block
+
+            baseline["languages"][language] = lang_block
+
+        # 5) 파일로 저장
+        output_path = self.baseline_dir / output_filename
+
+        try:
+            converted = self._convert_to_python_types(baseline)
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(converted, f, ensure_ascii=False, indent=2)
+            self.logger.info(f"✅ pause baseline 생성 완료: {output_path}")
+        except Exception as e:
+            self.logger.error(f"❌ pause baseline 저장 실패: {e}")
+
+        return baseline
+
 
     def generate_all_baselines_from_samples(self):
         """
         샘플 음성으로부터 baseline 생성 (Intonation, Tone, Speed)
         """
-        from app.agents.analyzers.intonation import IntonationAnalyzer
-
         sample_files = self.find_sample_audio_files()
 
         if not sample_files:
@@ -502,22 +921,18 @@ class BaselineManager:
         except Exception as e:
             self.logger.error(f"Speed baseline 생성 중 오류: {str(e)}")
 
+        # Pause baseline 생성
+        self.logger.info(f"\n{'='*80}")
+        self.logger.info("PAUSE Baseline 생성 중...")
+        self.logger.info(f"{'='*80}")
 
-if __name__ == "__main__":
-    # Baseline 관리자 테스트
-    manager = BaselineManager()
+        try:
+            self.generate_pause_baseline_from_samples(
+                sample_dir=self.sample_dir,
+                pause_reference_dir=self.baseline_dir / "pause_reference",
+                output_filename="pause_default.json",
+            )
+            self.logger.info("✅ Pause baseline 생성 완료")
 
-    # 샘플 파일 찾기
-    print("\n=== 샘플 파일 검색 ===")
-    files = manager.find_sample_audio_files()
-    print(f"총 {len(files)}개 파일")
-
-    # 모든 Baseline 생성
-    print("\n=== 모든 Baseline 생성 ===")
-    manager.generate_all_baselines_from_samples()
-
-    # Baseline 목록 조회
-    print("\n=== 생성된 Baseline ===")
-    baselines = manager.list_baselines()
-    for bl in baselines:
-        print(f"- {bl['file']}: {bl['agent']} ({bl['created_at']})")
+        except Exception as e:
+            self.logger.error(f"Pause baseline 생성 중 오류: {str(e)}")

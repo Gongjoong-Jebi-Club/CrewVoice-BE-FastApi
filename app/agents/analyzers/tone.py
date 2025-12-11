@@ -11,12 +11,10 @@ from typing import Dict, List, Tuple, Any, Optional
 from pathlib import Path
 
 # 기존 코드 경로 추가
-# __file__ is app/agents/analyzers/tone.py
-# parent.parent.parent is project root
-BASE_DIR = Path(__file__).parent.parent.parent
+BASE_DIR = Path(__file__).parent.parent
 
 # tone baseline JSON 기본 경로 (필요하면 프로젝트 구조에 맞게 수정)
-DEFAULT_TONE_BASELINE_PATH = BASE_DIR / "agents" / "baselines" / "tone_default.json"
+DEFAULT_TONE_BASELINE_PATH = BASE_DIR / "baselines" / "tone_default.json"
 
 class ToneAnalyzer:
     """톤(Tone) 분석기"""
@@ -40,17 +38,17 @@ class ToneAnalyzer:
         )
         f0_values = f0[~np.isnan(f0)]
 
-        f0_mean = np.mean(f0_values) if len(f0_values) > 0 else 0.0
-        f0_std = np.std(f0_values) if len(f0_values) > 0 else 0.0
+        f0_mean = float(np.mean(f0_values)) if len(f0_values) > 0 else 0.0
+        f0_std = float(np.std(f0_values)) if len(f0_values) > 0 else 0.0
 
         # 2) Energy (RMS)
         rms = librosa.feature.rms(y=y)[0]
-        rms_mean = np.mean(rms)
-        rms_std = np.std(rms)
+        rms_mean = float(np.mean(rms))
+        rms_std = float(np.std(rms))
 
         # 3) Spectral Centroid (음색 밝기)
         spec_centroid = librosa.feature.spectral_centroid(y=y, sr=sr)[0]
-        spec_centroid_mean = np.mean(spec_centroid)
+        spec_centroid_mean = float(np.mean(spec_centroid))
 
         # 4) HNR (Harmonics-to-Noise Ratio) 근사치
         snd = parselmouth.Sound(y, sampling_frequency=sr)
@@ -63,7 +61,7 @@ class ToneAnalyzer:
             if not np.isnan(hnr) and not np.isinf(hnr):
                 hnr_values.append(hnr)
 
-        hnr_like = np.mean(hnr_values) if hnr_values else 0.0
+        hnr_like = float(np.mean(hnr_values)) if hnr_values else 0.0
 
         return {
             "f0_mean": f0_mean,
@@ -151,19 +149,41 @@ class ToneAnalyzer:
         z: float,
         max_score: float = 10.0,
         z_zero: float = 2.5,
+        z_full: float = 0.5,
     ) -> float:
         """
-        |z|=0 (baseline과 동일) → max_score
-        |z|>=z_zero → 0점
-        그 사이에서는 |z|에 비례해 선형 감점
+        만점 범위를 추가한 center optimal score 함수
 
-        여기서 z_zero가 '임계값'에 해당:
-        mean ± z_zero*std 바깥이면 0점 처리.
+        |z| ≤ z_full → max_score (만점 범위)
+        z_full < |z| < z_zero → 선형 감점
+        |z| ≥ z_zero → 0점
+
+        Args:
+            z: z-score 값
+            max_score: 최대 점수 (기본값: 10.0)
+            z_zero: 0점이 되는 |z| 임계값 (기본값: 2.5)
+            z_full: 만점이 되는 |z| 임계값 (기본값: 0.5)
+
+        Example:
+            z_full=0.5, z_zero=2.5일 때:
+            - |z| ≤ 0.5 → 10점
+            - |z| = 1.0 → 7.5점
+            - |z| = 1.5 → 5.0점
+            - |z| = 2.0 → 2.5점
+            - |z| ≥ 2.5 → 0점
         """
         dz = abs(z)
+
+        # 만점 범위
+        if dz <= z_full:
+            return max_score
+
+        # 0점 범위
         if dz >= z_zero:
             return 0.0
-        ratio = dz / z_zero  # 0~1
+
+        # z_full ~ z_zero 사이에서 선형 감점
+        ratio = (dz - z_full) / (z_zero - z_full)
         score = max_score * (1.0 - ratio)
         return ToneAnalyzer._clip(score, 0.0, max_score)
 
@@ -215,7 +235,9 @@ class ToneAnalyzer:
             z,
             max_score=10.0,
             min_score=0.0,
-            z_full=1.0,    # z >= 1.0 (μ + 1σ 이상) → 만점
+            # z_full=1.0,    # z >= 1.0 (μ + 1σ 이상) → 만점
+            # z_zero=-2.0,   # z <= -2.0 (μ - 2σ 이하) → 0점
+            z_full=0.0,    # z >= 0.5 (μ + 0.5σ 이상) → 만점
             z_zero=-2.0,   # z <= -2.0 (μ - 2σ 이하) → 0점
         )
 
@@ -291,22 +313,35 @@ class ToneAnalyzer:
         pitch_position = self._pitch_position_score(feats, lang_features)
 
         return {
-            "clarity": clarity,
-            "stability": stability,
-            "brightness": brightness,
-            "pitch_position": pitch_position,
+            "clarity": float(clarity),
+            "stability": float(stability),
+            "brightness": float(brightness),
+            "pitch_position": float(pitch_position),
         }
 
-    @staticmethod
-    def _compute_tone_score(axis_scores: Dict[str, float]) -> float:
+    def _compute_tone_score(
+        self,
+        axis_scores: Dict[str, float],
+        weight_clarity: float,
+        weight_stability: float,
+        weight_brightness: float,
+        weight_pitch_position: float
+    ) -> float:
         """
         최종 Tone 점수 = 4개 축 점수의 가중합
+
+        Args:
+            axis_scores: 4개 축 점수
+            weight_clarity: 명료도 가중치
+            weight_stability: 안정성 가중치
+            weight_brightness: 밝기 가중치
+            weight_pitch_position: 음높이 위치 가중치
         """
         tone_score = (
-            0.4 * axis_scores["clarity"] +
-            0.3 * axis_scores["stability"] +
-            0.2 * axis_scores["brightness"] +
-            0.1 * axis_scores["pitch_position"]
+            weight_clarity * axis_scores["clarity"] +
+            weight_stability * axis_scores["stability"] +
+            weight_brightness * axis_scores["brightness"] +
+            weight_pitch_position * axis_scores["pitch_position"]
         )
         return ToneAnalyzer._clip(tone_score, 0.0, 10.0)
     
@@ -318,15 +353,29 @@ class ToneAnalyzer:
         language_code: str = "ko-KR",
         gender: str = "F",
         baseline_path: Path = DEFAULT_TONE_BASELINE_PATH,
+        weight_clarity: float = 0.4,
+        weight_stability: float = 0.3,
+        weight_brightness: float = 0.2,
+        weight_pitch_position: float = 0.1
     ) -> Dict[str, Any]:
         """
         파일 경로만 받아서 톤 분석을 수행하는 단일 엔트리 포인트.
+
+        Args:
+            file_path: 음성 파일 경로
+            language_code: 언어 코드 (ko-KR, en-US)
+            gender: 성별 (F, M)
+            baseline_path: tone baseline JSON 파일 경로
+            weight_clarity: 명료도 가중치
+            weight_stability: 안정성 가중치
+            weight_brightness: 밝기 가중치
+            weight_pitch_position: 음높이 위치 가중치
 
         - 1) baseline(tone_default.json) 로드
         - 2) 오디오 파일 로드
         - 3) 6개 raw feature 추출
         - 4) 4개 Tone 축 점수 계산
-        - 5) 최종 tone_score 계산
+        - 5) 최종 tone_score 계산 (가중치 적용)
         """
         # 1) baseline 로드
         self._ensure_baseline_loaded(baseline_path)
@@ -340,8 +389,14 @@ class ToneAnalyzer:
         # 4) 4개 축 점수 계산
         axis_scores = self._compute_axis_scores(feats, language_code, gender)
 
-        # 5) 최종 tone 점수 계산 (0~10 스케일)
-        tone_score = self._compute_tone_score(axis_scores)
+        # 5) 최종 tone 점수 계산 (0~10 스케일, 가중치 적용)
+        tone_score = self._compute_tone_score(
+            axis_scores,
+            weight_clarity,
+            weight_stability,
+            weight_brightness,
+            weight_pitch_position
+        )
 
         # 6) 100점으로 normalize (상위 레이어에서 600점 환산 예정)
         normalized_score = tone_score * 10.0
@@ -356,8 +411,3 @@ class ToneAnalyzer:
             # "tone_score": tone_score,   # 0~10점 (추후 600점 환산은 상위 레이어에서)
             "score": round(normalized_score, 2),
         }
-
-if __name__ == "__main__":
-    analyzer = ToneAnalyzer()
-    result = analyzer.analyze("test.wav", language_code="ko-KR")
-    print(json.dumps(result, ensure_ascii=False, indent=2))

@@ -9,13 +9,15 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from app.agents.analyzers.validate import ValidateAnalyzer
-from app.agents.analyzers.accent import AccentAnalyzer
-from app.agents.analyzers.pronunciation import PronunciationAnalyzer
-from app.agents.analyzers.pause import PauseAnalyzer
-from app.agents.analyzers.intonation import IntonationAnalyzer
-from app.agents.analyzers.speed import SpeedAnalyzer
-from app.agents.analyzers.tone import ToneAnalyzer
+from app.agents.analyzers import (
+    ValidateAnalyzer,
+    AccentAnalyzer,
+    PronunciationAnalyzer,
+    PauseAnalyzer,
+    IntonationAnalyzer,
+    SpeedAnalyzer,
+    ToneAnalyzer
+)
 
 
 class SpeechAnalysisManager:
@@ -117,46 +119,71 @@ class SpeechAnalysisManager:
                 )
 
             elif agent_name == "accent":
-                # Accent: language_code를 "ko"/"en" 형태로 변환
+                # Accent: language_code, 가중치 파라미터 전달
                 language_code = kwargs.get("language_code", "ko-KR")
-                language = language_code.split('-')[0]  # 'ko-KR' -> 'ko'
-                # AccentAnalyzer는 Azure/Whisper를 내부에서 독립적으로 호출
-                result = agent.analyze(wav_path, language=language)
+                result = agent.analyze(
+                    wav_path,
+                    language=language_code,
+                    weight_pitch=kwargs.get("weight_pitch", 0.6),
+                    weight_energy=kwargs.get("weight_energy", 0.4)
+                )
 
             elif agent_name == "pronunciation":
-                # Pronunciation: Validate의 azure_data 재사용
+                # Pronunciation: Validate의 가중 평균 점수 사용
                 azure_data = kwargs.get("azure_data")
+                validation_result = kwargs.get("validation_result")
                 result = agent.analyze(
                     wav_path,
                     reference_text=kwargs.get("reference_text"),
                     language_code=kwargs.get("language_code", "ko-KR"),
-                    azure_data=azure_data  # ← azure_data 전달
+                    azure_data=azure_data,  # 단어별 상세용
+                    validation_result=validation_result  # 가중 평균 점수용
                 )
 
             elif agent_name == "pause":
-                # Pause: Validate의 azure_data 재사용
+                # Pause: Validate의 가중 평균 FluencyScore 사용, 가중치 파라미터 전달
                 azure_data = kwargs.get("azure_data")
+                validation_result = kwargs.get("validation_result")
                 reference_script = kwargs.get("reference_text") or kwargs.get("reference_script")
-                result = agent.analyze(wav_path, azure_data=azure_data, reference_script=reference_script)
+                result = agent.analyze(
+                    wav_path,
+                    azure_data=azure_data,
+                    reference_script=reference_script,
+                    validation_result=validation_result,  # 가중 평균 FluencyScore용
+                    language_code=kwargs.get("language_code", "ko-KR"),
+                    weight_fluency=kwargs.get("weight_fluency", 0.7),
+                    weight_position=kwargs.get("weight_position", 0.2),
+                    weight_length=kwargs.get("weight_length", 0.1)
+                )
 
             elif agent_name == "intonation":
-                # Azure API 호출 없이 음향 특징만 분석 (language_code만 전달)
+                # Azure API 호출 없이 음향 특징만 분석 (language_code, 가중치 파라미터 전달)
                 result = agent.analyze(
                     wav_path,
                     reference_text=kwargs.get("reference_text"),
                     baseline_name=kwargs.get("baseline_name", "default"),
-                    language_code=kwargs.get("language_code", "ko-KR")
+                    language_code=kwargs.get("language_code", "ko-KR"),
+                    weight_baseline=kwargs.get("weight_baseline", 0.7),
+                    weight_iso=kwargs.get("weight_iso", 0.3)
                 )
 
             elif agent_name == "speed":
-                result = agent.analyze(wav_path)
+                # Speed: max_deduction 파라미터 전달
+                result = agent.analyze(
+                    wav_path,
+                    max_deduction=kwargs.get("max_deduction", 5.0)
+                )
 
             elif agent_name == "tone":
-                # Tone: language_code와 gender 파라미터 전달
+                # Tone: language_code, gender, 가중치 파라미터 전달
                 result = agent.analyze(
                     wav_path,
                     language_code=kwargs.get("language_code", "ko-KR"),
-                    gender=kwargs.get("gender", "F")
+                    gender=kwargs.get("gender", "F"),
+                    weight_clarity=kwargs.get("weight_clarity", 0.4),
+                    weight_stability=kwargs.get("weight_stability", 0.3),
+                    weight_brightness=kwargs.get("weight_brightness", 0.2),
+                    weight_pitch_position=kwargs.get("weight_pitch_position", 0.1)
                 )
 
             else:
@@ -251,10 +278,26 @@ class SpeechAnalysisManager:
             # Validate 검증 통과 - 정상적으로 나머지 에이전트 실행
             self.logger.info("[VALIDATE] 검증 통과 - 나머지 에이전트 분석을 진행합니다.")
             kwargs["azure_data"] = azure_data
+            kwargs["validation_result"] = validate_result["result"]  # Pronunciation용 가중 평균 점수
 
-            # 2단계: 나머지 에이전트 병렬 실행
-            # Pronunciation은 이제 azure_data 재사용
-            other_agents = ["pronunciation", "accent", "pause", "intonation", "speed", "tone"]
+            # 2단계: Accent 먼저 실행 (Intonation이 재사용할 데이터 생성)
+            self.logger.info("[ACCENT] 먼저 실행 - Intonation에서 재사용할 Azure STT 데이터 생성")
+            accent_result = self._run_agent("accent", wav_path, **kwargs)
+            results["accent"] = accent_result["result"]
+
+            # Accent의 타임스탬프 데이터를 Intonation에 전달
+            accent_timestamps = accent_result["result"].get("timestamps", [])
+            if accent_timestamps:
+                # Accent의 원본 타임스탬프 데이터 (word, confidence 포함)를 Intonation에 전달
+                kwargs["accent_timestamps"] = accent_timestamps
+                self.logger.info(f"[ACCENT] {len(accent_timestamps)}개 단어의 타임스탬프 데이터를 Intonation에 공유")
+            else:
+                self.logger.warning("[ACCENT] 타임스탬프 데이터가 없어 Intonation이 직접 Azure API 호출")
+
+            # 3단계: 나머지 에이전트 병렬 실행
+            # Pronunciation, Pause는 Validate의 가중 평균 점수 사용
+            # Intonation은 Accent의 타임스탬프 데이터 사용
+            other_agents = ["pronunciation", "pause", "intonation", "speed", "tone"]
 
             with ThreadPoolExecutor(max_workers=5) as executor:
                 future_to_agent = {
@@ -276,9 +319,10 @@ class SpeechAnalysisManager:
                             "status": "error"
                         }
 
-        # 총점 계산
-        total_score = sum(result.get("score", 0) for result in results.values())
-        max_total_score = sum(result.get("max_score", 100) for result in results.values())
+        # 총점 계산 (Validate 에이전트 제외 - 점수 에이전트만 계산)
+        scoring_agents = {k: v for k, v in results.items() if k != "validate"}
+        total_score = sum(result.get("score", 0) for result in scoring_agents.values())
+        max_total_score = sum(result.get("max_score", 100) for result in scoring_agents.values())
         average_score = (total_score / max_total_score * 100) if max_total_score > 0 else 0
 
         end_time = datetime.now()
@@ -347,6 +391,9 @@ class SpeechAnalysisManager:
         """
         각 에이전트의 부가적인 output 추출
 
+        각 에이전트가 실제로 반환하는 데이터를 기준으로 추출하여
+        comment_generator에 전달합니다.
+
         Args:
             results: analyze_parallel 결과
 
@@ -362,8 +409,8 @@ class SpeechAnalysisManager:
             accent_data = detailed_results["accent"]
             outputs["accent"] = {
                 "score": accent_data.get("score", 0),
-                "feedback": accent_data.get("feedback", []),
-                "features": accent_data.get("features", {})
+                "score_pitch": accent_data.get("score_pitch", 0),
+                "score_energy": accent_data.get("score_energy", 0)
             }
 
         # Pronunciation
@@ -374,8 +421,7 @@ class SpeechAnalysisManager:
                 "accuracy_score": pron_data.get("accuracy_score", 0),
                 "fluency_score": pron_data.get("fluency_score", 0),
                 "completeness_score": pron_data.get("completeness_score", 0),
-                "recognized_text": pron_data.get("recognized_text", ""),
-                "word_details": pron_data.get("word_details", [])
+                "recognized_text": pron_data.get("recognized_text", "")
             }
 
         # Pause
@@ -394,12 +440,15 @@ class SpeechAnalysisManager:
         # Intonation
         if "intonation" in detailed_results:
             inton_data = detailed_results["intonation"]
+            # asr_metrics에서 recognized_text 추출 (transcript 대용)
+            asr_metrics = inton_data.get("asr_metrics", {})
+
             outputs["intonation"] = {
                 "score": inton_data.get("score", 0),
                 "language": inton_data.get("language", ""),
                 "rhythm_type": inton_data.get("rhythm_type", ""),
                 "ending_type": inton_data.get("ending_type", ""),
-                "features": inton_data.get("features", {})
+                "transcript": asr_metrics.get("recognized_text", "")  # asr_metrics에서 추출
             }
 
         # Speed
@@ -410,7 +459,7 @@ class SpeechAnalysisManager:
                 "overall_rate": speed_data.get("overall_rate", 0),
                 "total_syllables": speed_data.get("total_syllables", 0),
                 "total_speech_duration": speed_data.get("total_speech_duration", 0),
-                "evaluation": speed_data.get("evaluation", "")
+                "optimal_range": speed_data.get("optimal_range", "")
             }
 
         # Tone
@@ -424,34 +473,7 @@ class SpeechAnalysisManager:
                 "clarity_score": axis_scores.get("clarity", 0),
                 "stability_score": axis_scores.get("stability", 0),
                 "brightness_score": axis_scores.get("brightness", 0),
-                "pitch_position_score": axis_scores.get("pitch_position", 0),
+                "pitch_position_score": axis_scores.get("pitch_position", 0)
             }
 
         return outputs
-
-
-if __name__ == "__main__":
-    # 테스트 코드
-    manager = SpeechAnalysisManager()
-
-    # 샘플 파일로 테스트
-    test_file = "app/agents/sample/F_ko-KR_track1.wav"
-    test_text = """
-    트랙 1 손님 여러분 도쿄까지 가는 저희 대한항공 701편에 탑승하신 것을 환영합니다. 안전한 여행을 위해 갖고 계신 짐은 앞 좌석 아래나 선반 속에 보관해 주시길 바랍니다. 감사합니다.
-    """
-
-    print(f"\n=== 음성 분석 테스트 ===")
-    print(f"파일: {test_file}")
-    print(f"기대 텍스트: {test_text.strip()}\n")
-
-    result = manager.analyze_parallel(
-        test_file,
-        reference_text=test_text.strip(),
-        language_code="ko-KR",
-        gender="F"
-    )
-
-    # print("\n=== 분석 결과 ===")
-    # # numpy 타입을 JSON 직렬화 가능한 타입으로 변환
-    # serializable_result = manager._convert_to_python_types(result)
-    # print(json.dumps(serializable_result, ensure_ascii=False, indent=2))
