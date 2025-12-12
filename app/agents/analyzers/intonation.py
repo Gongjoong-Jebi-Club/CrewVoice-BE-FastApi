@@ -303,13 +303,57 @@ class IntonationAnalyzer:
 
         return total_score, item_scores
 
-    def _get_asr_metrics(self, wav_path: str, reference_text: Optional[str], language_code: str) -> Dict:
+    def _get_asr_metrics(self, wav_path: str, reference_text: Optional[str], language_code: str, accent_timestamps: Optional[List[Dict]] = None) -> Dict:
         """
         ASR 보조 지표 계산 (논문 핵심 지표)
         - asr_confidence_mean: Azure STT 인식 신뢰도 평균
         - asr_confidence_std: 신뢰도 변동폭
         - asr_wer: Word Error Rate (reference_text가 있을 때만)
+
+        Args:
+            wav_path: 음성 파일 경로
+            reference_text: 참조 텍스트 (WER 계산용)
+            language_code: 언어 코드
+            accent_timestamps: Accent 에이전트의 타임스탬프 데이터 (재사용용)
         """
+        # Accent 데이터가 있으면 재사용
+        if accent_timestamps:
+            try:
+                # Accent 데이터에서 Confidence 추출
+                confidences = []
+                words = []
+
+                for item in accent_timestamps:
+                    if 'confidence' in item:
+                        confidences.append(item['confidence'])
+                    if 'word' in item:
+                        words.append(item['word'])
+
+                if confidences:
+                    asr_confidence_mean = float(np.mean(confidences))
+                    asr_confidence_std = float(np.std(confidences))
+                    recognized_text = " ".join(words)
+
+                    # WER 계산 (reference_text가 있을 때만)
+                    asr_wer = 0.0
+                    if reference_text and recognized_text:
+                        try:
+                            from jiwer import wer
+                            asr_wer = float(wer(reference_text, recognized_text))
+                        except ImportError:
+                            asr_wer = 0.0
+
+                    return {
+                        "asr_confidence_mean": asr_confidence_mean,
+                        "asr_confidence_std": asr_confidence_std,
+                        "asr_wer": asr_wer,
+                        "recognized_text": recognized_text,
+                        "asr_status": "reused_from_accent"
+                    }
+            except Exception as e:
+                print(f"Accent 데이터 재사용 중 오류: {e}. Azure API 직접 호출로 전환합니다.")
+
+        # Accent 데이터가 없거나 재사용 실패 시 직접 Azure API 호출
         try:
             speech_key = os.getenv("SPEECH_KEY") or os.getenv("AZURE_SPEECH_KEY")
             speech_region = os.getenv("SPEECH_REGION") or os.getenv("AZURE_SPEECH_REGION")
@@ -504,7 +548,7 @@ class IntonationAnalyzer:
         self.baseline_cache[baseline_name] = baseline
         return baseline
 
-    def analyze(self, wav_path: str, reference_text: str = None, baseline_name: str = "default", language_code: str = None, scenario: str = "general", weight_baseline: float = 0.7, weight_iso: float = 0.3) -> Dict:
+    def analyze(self, wav_path: str, reference_text: str = None, baseline_name: str = "default", language_code: str = None, scenario: str = "general", weight_baseline: float = 0.7, weight_iso: float = 0.3, accent_timestamps: list = None, **kwargs) -> Dict:
         """
         억양 분석 수행 (ISO 25000 + 논문 기반)
 
@@ -514,6 +558,7 @@ class IntonationAnalyzer:
             baseline_name: Baseline 이름
             language_code: 언어 코드 (선택적, 없으면 파일명 기반 판별)
             scenario: 상황별 가중치 ("safety_takeoff", "service_inflight", "emergency", "general")
+            accent_timestamps: Accent 에이전트의 타임스탬프 데이터 (재사용용, 선택)
 
         Returns:
             분석 결과 딕셔너리 (ISO 25000 품질 특성 포함, 0-100점 환산)
@@ -534,7 +579,8 @@ class IntonationAnalyzer:
                     lang = "en-US"
 
             # 3. ASR 보조 지표 추출 (논문 핵심)
-            asr_metrics = self._get_asr_metrics(wav_path, reference_text, lang)
+            # Accent 데이터가 있으면 재사용, 없으면 직접 Azure API 호출
+            asr_metrics = self._get_asr_metrics(wav_path, reference_text, lang, accent_timestamps)
 
             # 4. ISO 25000 품질 특성 계산
             quality_scores = self._compute_quality_attributes(test_features, lang, asr_metrics)

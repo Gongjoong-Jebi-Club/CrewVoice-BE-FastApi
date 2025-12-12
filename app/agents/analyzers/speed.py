@@ -13,10 +13,10 @@ from pathlib import Path
 from scipy.signal import find_peaks
 
 # 기존 코드 경로 추가
-BASE_DIR = Path(__file__).parent.parent.parent
+BASE_DIR = Path(__file__).parent.parent
 
 # speed baseline JSON 기본 경로
-DEFAULT_SPEED_BASELINE_PATH = BASE_DIR / "agents" / "baselines" / "speed_default.json"
+DEFAULT_SPEED_BASELINE_PATH = BASE_DIR / "baselines" / "speed_default.json"
 
 class SpeedAnalyzer:
     """속도(Speed) 분석기"""

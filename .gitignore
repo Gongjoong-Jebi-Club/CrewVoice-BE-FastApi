@@ -104,3 +104,18 @@ app/agents/sample/*.wav
 
 # log
 log/
+
+# Debug audio files (생성된 디버그용 오디오 파일)
+debug_audio/
+
+# Analysis documents (임시 분석 문서)
+SPRINGBOOT_API_DESIGN_ANALYSIS.md
+*분석*.md
+*명세*.md
+
+# Python version (개인 설정)
+.python-version
+
+# UV lock file (선택적 - 팀 정책에 따름)
+# uv.lock
+

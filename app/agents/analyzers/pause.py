@@ -10,10 +10,10 @@ from typing import Dict, List, Tuple, Optional, Any
 # Azure는 pronunciation 에이전트에서 이미 호출되므로 여기서는 직접 분석
 
 # 기존 코드 경로 추가
-BASE_DIR = Path(__file__).parent.parent.parent  # app/agents/analyzers -> app/agents/ -> app/
+BASE_DIR = Path(__file__).parent.parent
 
 # pause baseline JSON 기본 경로
-DEFAULT_PAUSE_BASELINE_PATH = BASE_DIR / "agents" / "baselines" / "pause_default.json"
+DEFAULT_PAUSE_BASELINE_PATH = BASE_DIR / "baselines" / "pause_default.json"
 
 
 class PauseAnalyzer:
