@@ -1,0 +1,28 @@
+# Baseline 데이터 (재생성 가능하므로 제외)
+baselines/*.json
+
+# Pause reference - Azure 결과 JSON (재생성 가능)
+baselines/pause_reference/*.json
+
+# 단, 원본 스크립트 TXT 파일은 커밋 (수동 작성이므로 버전 관리 필요)
+!baselines/pause_reference/*.txt
+!baselines/pause_reference/README.md
+!baselines/pause_reference/.gitkeep
+
+# 샘플 음성 파일 (파일 크기가 큰 경우)
+sample/*.wav
+sample/*.mp3
+
+# 단, .gitkeep은 유지
+!sample/.gitkeep
+
+# 로그 파일
+*.log
+log/
+
+# Python 캐시
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python

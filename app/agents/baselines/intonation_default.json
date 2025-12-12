@@ -1,0 +1,38 @@
+{
+  "agent": "intonation",
+  "sample_file": "sample/F_ko-KR_track12.wav",
+  "created_at": "2025-12-09T15:44:35.665115",
+  "reference_features": {
+    "f0_mean": 100.43564267202882,
+    "f0_std": 23.135292588041455,
+    "f0_median": 100.28947374140385,
+    "f0_range": 96.57598506590816,
+    "f0_delta_mean": 2.674480820185886,
+    "energy": 0.08234099298715591,
+    "energy_std": 0.07079964131116867,
+    "energy_max": 0.3049706816673279,
+    "spectral_centroid": 3445.9470045193984,
+    "spectral_rolloff": 5977.427540010619,
+    "rising_ratio": 0.31952965235173825,
+    "falling_ratio": 0.49233128834355827,
+    "duration": 33.473333333333336,
+    "zero_crossing_rate": 0.111980295379681,
+    "mfcc_1": -325.633056640625,
+    "mfcc_2": 117.0009765625,
+    "mfcc_3": -23.03499984741211,
+    "mfcc_4": 18.546457290649414,
+    "mfcc_5": 0.4820287525653839,
+    "ending_slope": -0.08791893554597201,
+    "ending_type": "flat",
+    "rhythm_type": "syllable-timed",
+    "energy_variability": 0.002115105977281928,
+    "pause_ratio": 0.22099156332519074,
+    "avg_pause_duration": 0.23219954648526095,
+    "pause_count": 14,
+    "sentence_final_lowering": 0.08791893554597201
+  },
+  "metadata": {
+    "file_size": 5953490,
+    "file_name": "F_ko-KR_track12.wav"
+  }
+}

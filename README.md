@@ -7,20 +7,97 @@ CrewVoice 프로젝트의 음성 평가 API 서버입니다. Spring Boot 백엔�
 ```
 CrewVoice-BE-FastApi/
 ├── app/
-│   ├── main.py              # FastAPI 애플리케이션 진입점
-│   ├── apis/
+│   ├── main.py                     # FastAPI 애플리케이션 진입점
+│   │
+│   ├── apis/                       # API 라우터
 │   │   └── v1/
-│   │       └── router_evaluate.py  # 평가 API 라우터
-│   ├── schemas/
-│   │   └── evaluation.py    # Pydantic 스키마 정의
-│   ├── core/                # 핵심 설정 (추후 확장)
-│   └── services/            # 비즈니스 로직 (추후 확장)
-├── pyproject.toml           # 프로젝트 메타데이터 및 의존성 관리
-├── uv.lock                  # uv 의존성 잠금 파일
-├── .python-version          # Python 버전 지정
-├── .gitignore               # Git 제외 파일 목록
+│   │       └── router_evaluate.py  # 평가 API 라우터 (외부 요청 접수)
+│   │
+│   ├── agents/                     # 평가 항목 전문 에이전트
+│   │   └── __init__.py
+│   │
+│   ├── orchestrators/              # 에이전트 조율 및 피드백 생성
+│   │   └── __init__.py
+│   │
+│   ├── schemas/                    # Pydantic 스키마 (API 요청/응답)
+│   │   ├── __init__.py
+│   │   └── evaluation.py
+│   │
+│   ├── services/                   # Spring Boot 연동 서비스
+│   │   └── __init__.py
+│   │
+│   ├── core/                       # 핵심 설정
+│   │   └── __init__.py
+│   │
+│   ├── middleware/                 # 미들웨어
+│   │   └── __init__.py
+│   │
+│   └── utils/                      # 유틸리티
+│       └── __init__.py
+│
+├── pyproject.toml                  # 프로젝트 메타데이터 및 의존성 관리
+├── uv.lock                         # uv 의존성 잠금 파일
+├── .python-version                 # Python 3.12
+├── .env.example                    # 환경변수 템플릿
+├── .gitignore                      # Git 제외 파일 목록
 └── README.md
 ```
+
+### 디렉토리 역할
+
+#### 📁 `app/apis/`
+- **역할**: 외부 요청을 받는 API 엔드포인트 정의
+- **설명**: FastAPI 라우터를 통해 HTTP 요청을 처리하고, 비즈니스 로직은 다른 레이어로 위임
+- **예시**: 평가 API 엔드포인트 (`/api/v1/evaluate`)
+
+#### 📁 `app/agents/`
+- **역할**: 6개 평가 항목을 담당하는 전문 에이전트 모음
+- **설명**: 각 에이전트는 특정 평가 항목(발음, 쉼, 억양, 강세, 톤, 속도)을 독립적으로 분석
+- **구현 예정**:
+  - `base_agent.py` - 공통 인터페이스 (BaseAgent 추상 클래스)
+  - `pronunciation_agent.py` - Azure Pronunciation Assessment
+  - `pause_agent.py` - Azure Offset/Duration 기반 쉼 분석
+  - `intonation_agent.py` - parselmouth F0 분석
+  - `accent_agent.py` - parselmouth Intensity 분석
+  - `tone_agent.py` - parselmouth 종합 분석 (pitch range 등)
+  - `speed_agent.py` - SPS 규칙 기반 속도 계산
+  - 위 파일 구조는 파일 리펙토링 시 임의로 지정. 폴더 안에 파일 구조는 로직 담당이 임의로 지정.
+
+#### 📁 `app/orchestrators/`
+- **역할**: 여러 에이전트를 조율하고 최종 피드백 생성
+- **설명**:
+  - `evaluation_orchestrator.py` - 6개 에이전트를 병렬/순차 실행하고 결과 수집
+  - `feedback_generator.py` - LLM을 활용해 에이전트 결과를 종합하여 사용자 친화적 피드백 생성
+
+#### 📁 `app/schemas/`
+- **역할**: API 요청/응답 데이터 검증 및 직렬화
+- **설명**: Pydantic 모델을 사용한 타입 안전성 보장
+- **예시**: `EvaluationRequest`, `EvaluationResponse`, `AgentResponse`
+
+#### 📁 `app/services/`
+- **역할**: 외부 시스템(Spring Boot, S3)과의 통신
+- **설명**:
+  - `springboot_client.py` - Spring Boot API 호출 전담 (httpx 사용)
+  - `storage_service.py` - S3 presigned URL 처리
+
+#### 📁 `app/core/`
+- **역할**: 애플리케이션 핵심 설정 및 구성
+- **설명**:
+  - `config.py` - 환경변수, Azure/OpenAI API 키 관리
+  - `logging_config.py` - 로깅 설정
+
+#### 📁 `app/middleware/`
+- **역할**: 요청/응답 처리 과정에서 공통 로직 실행
+- **설명**:
+  - `cors.py` - CORS 설정
+  - `request_logging.py` - 요청/응답 로깅
+
+#### 📁 `app/utils/`
+- **역할**: 범용 유틸리티 함수 모음
+- **설명**:
+  - `audio_processing.py` - 샘플링 레이트 변환, 포맷 변환
+  - `file_handler.py` - 임시 파일 관리, S3 연동
+  - `metrics.py` - SPS, Duration 계산 공통 함수
 
 ## 주요 기능
 
