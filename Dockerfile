@@ -26,15 +26,13 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
     # 2. 생성된 requirements.txt를 사용하여 시스템에 의존성을 설치합니다.
     uv pip sync --system requirements.txt
 
-# 6. 환경 변수 파일 복사
-COPY .env .env
-
-# 7. 애플리케이션 소스 코드 복사 (이 부분은 변경 없음)
+# 6. 애플리케이션 소스 코드 복사 (이 부분은 변경 없음)
 COPY ./app ./app
 
-# 8. 서버 실행 포트 노출 (이 부분은 변경 없음)
+# 7. 서버 실행 포트 노출 (이 부분은 변경 없음)
 EXPOSE 8000
 
-# 9. 애플리케이션 실행
+# 8. 애플리케이션 실행
 # --host 0.0.0.0 옵션은 컨테이너 외부에서 접근 가능하도록 합니다.
+# 환경변수는 docker run -e 옵션 또는 --env-file로 주입됩니다.
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
