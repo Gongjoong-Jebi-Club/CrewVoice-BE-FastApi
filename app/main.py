@@ -13,18 +13,16 @@ app = FastAPI(title="CrewVoice Evaluation API (Python)")
 origins = [
     # 로컬 개발 환경
     "http://localhost:8080",  # Spring Boot 로컬
-    "http://localhost:3000",  # React/Vue 개발 서버
-    "http://127.0.0.1:8080",
-    "http://127.0.0.1:3000",
+    "http://localhost:3000",  # React/Vue 등 프론트엔드 개발 서버
+    "http://localhost:8000",  # FastAPI 개발 서버
+    "http://localhost:5173",  # Vite 개발 서버
 
-    # 프로덕션 환경 (AWS EC2 서브도메인)
-    "https://server.crewvoice.cloud",  # Spring Boot 서브도메인 (HTTPS)
-    "http://server.crewvoice.cloud",   # Spring Boot 서브도메인 (HTTP, 개발용)
-
-    # 프론트엔드 배포 환경
-    "https://crew-voice-client-vercel.vercel.app",
-    "https://crewvoice.cloud",         # 메인 도메인
-    "https://www.crewvoice.cloud",
+    # 배포 환경
+    "https://server.crewvoice.cloud",   # Spring Boot 배포 서버
+    "https://ai.crewvoice.cloud",       # FastAPI 배포 서버
+    "https://chat.crewvoice.cloud",     # Chat 배포 서버
+    "https://www.crewvoice.cloud",      # 프로덕션 메인
+    "https://crew-voice-client-vercel.vercel.app" # Vercel 배포 클라이언트
 ]
 
 app.add_middleware(

@@ -119,3 +119,17 @@ SPRINGBOOT_API_DESIGN_ANALYSIS.md
 # UV lock file (선택적 - 팀 정책에 따름)
 # uv.lock
 
+# Windows 잘못된 파일
+NUL
+
+# Test results
+test_result.json
+test_api_result.json
+test_logs/
+
+# Redis dump files
+dump.rdb
+*.rdb
+
+# Deployment backups
+.backups/

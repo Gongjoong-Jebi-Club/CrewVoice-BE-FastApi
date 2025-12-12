@@ -438,12 +438,22 @@ async def send_callback(callback_url: str, payload: dict, task_id: str):
         - 타임아웃: 10초
         - 재시도: 없음 (한 번만 전송)
         - 실패 시: 로그만 기록
+        - 인증: X-API-Key 헤더 포함
     """
+    # 환경 변수에서 API Key 읽기
+    api_key = os.getenv("CALLBACK_API_KEY", "")
+
+    # 요청 헤더 설정
+    headers = {
+        "Content-Type": "application/json",
+        "X-API-Key": api_key
+    }
+
     async with httpx.AsyncClient(timeout=10) as client:
         try:
             logger.info(f"[{task_id}] 콜백 전송 시작: {callback_url}")
 
-            response = await client.post(callback_url, json=payload)
+            response = await client.post(callback_url, json=payload, headers=headers)
             response.raise_for_status()
 
             logger.info(f"[{task_id}] 콜백 전송 완료: HTTP {response.status_code}")

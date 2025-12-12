@@ -16,6 +16,7 @@ Note:
 import os
 import json
 import threading
+import logging
 from typing import Dict, Tuple
 from pathlib import Path
 from dotenv import load_dotenv
@@ -24,6 +25,9 @@ from difflib import SequenceMatcher
 
 # .env 파일 로드
 load_dotenv()
+
+# 로거 설정
+logger = logging.getLogger("uvicorn")
 
 
 class ValidateAnalyzer:
@@ -93,7 +97,12 @@ class ValidateAnalyzer:
         def recognized_cb(evt):
             """음성이 성공적으로 인식되었을 때 호출"""
             if evt.result.reason == speechsdk.ResultReason.RecognizedSpeech:
-                recognized_text_parts.append(evt.result.text)
+                recognized_text = evt.result.text
+                recognized_text_parts.append(recognized_text)
+
+                # 🔍 디버깅: 전사된 텍스트 로깅
+                logger.info(f"[VALIDATE] Azure STT 전사 (청크 {len(recognized_text_parts)}): '{recognized_text}'")
+
                 json_result = json.loads(evt.result.properties.get(
                     speechsdk.PropertyId.SpeechServiceResponse_JsonResult))
                 all_json_results.append(json_result)
@@ -102,11 +111,33 @@ class ValidateAnalyzer:
 
         def session_stopped_cb(evt):
             """세션 종료"""
+            logger.info(f"[VALIDATE] Azure STT 세션 종료 (전체 청크 수: {len(recognized_text_parts)})")
             done.set()
 
         def canceled_cb(evt):
             """취소 이벤트"""
-            print(f"Validate Error: {evt.error_details}")
+            logger.error(f"[VALIDATE] Azure STT 취소됨!")
+
+            # 에러 상세 출력
+            if hasattr(evt, 'error_details') and evt.error_details:
+                logger.error(f"[VALIDATE] 에러 상세: {evt.error_details}")
+            else:
+                logger.error(f"[VALIDATE] 에러 상세: (없음)")
+
+            # 취소 사유 출력 (result.reason을 통해 접근)
+            if hasattr(evt, 'result') and evt.result:
+                if hasattr(evt.result, 'cancellation_details'):
+                    details = evt.result.cancellation_details
+                    logger.error(f"[VALIDATE] 취소 사유: {details.reason}")
+                    if hasattr(details, 'error_details') and details.error_details:
+                        logger.error(f"[VALIDATE] 취소 에러 상세: {details.error_details}")
+                    if hasattr(details, 'error_code'):
+                        logger.error(f"[VALIDATE] 에러 코드: {details.error_code}")
+                else:
+                    logger.error(f"[VALIDATE] 취소 사유: (cancellation_details 없음)")
+            else:
+                logger.error(f"[VALIDATE] 취소 사유: (result 없음)")
+
             done.set()
 
         # 이벤트 핸들러 연결
@@ -114,13 +145,35 @@ class ValidateAnalyzer:
         speech_recognizer.session_stopped.connect(session_stopped_cb)
         speech_recognizer.canceled.connect(canceled_cb)
 
+        # 🔍 Azure STT 시작 로깅
+        logger.info(f"[VALIDATE] Azure STT 시작 - 파일: {audio_file}, 언어: {language_code}")
+        logger.info(f"[VALIDATE] 참조 텍스트: '{reference_text[:100]}...'")
+
         # 연속 인식 시작
         speech_recognizer.start_continuous_recognition_async()
-        done.wait()
+
+        # ⚠️ 타임아웃 추가 (3분)
+        timeout_seconds = 180
+        if not done.wait(timeout=timeout_seconds):
+            # 타임아웃 발생
+            logger.error(f"[VALIDATE] Azure STT 타임아웃 ({timeout_seconds}초 초과)!")
+            speech_recognizer.stop_continuous_recognition_async()
+            return {
+                "is_valid": False,
+                "error": f"Azure STT 처리 시간 초과 ({timeout_seconds}초)",
+                "feedback": ["음성 인식 타임아웃"],
+                "status": "error"
+            }, None
+
         speech_recognizer.stop_continuous_recognition_async()
+
+        # ⚠️ 중요: 객체 명시적 삭제로 파일 잠금 해제 (Windows [WinError 32] 해결)
+        del speech_recognizer
+        del audio_config
 
         # 결과 처리
         if not all_pron_scores:
+            logger.warning(f"[VALIDATE] Azure STT 결과 없음 (all_pron_scores 비어있음)")
             return {
                 "is_valid": False,
                 "error": "음성을 인식할 수 없거나 처리 중 오류가 발생했습니다.",
@@ -130,6 +183,10 @@ class ValidateAnalyzer:
 
         # 전체 인식된 텍스트
         full_recognized_text = " ".join(recognized_text_parts)
+
+        # 🔍 최종 전사 결과 로깅
+        logger.info(f"[VALIDATE] 전체 전사 텍스트: '{full_recognized_text}'")
+        logger.info(f"[VALIDATE] 참조 텍스트: '{reference_text}'")
 
         # 점수 계산 (가중 평균)
         total_duration_ticks = sum(res.get('Duration', 0) for res in all_json_results)

@@ -1,7 +1,7 @@
 """
 Spring Boot 연동 API 스키마
 """
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional
 
 
@@ -24,9 +24,9 @@ class EvaluationRequest(BaseModel):
     language: str
     callback_url: str = Field(..., alias="callbackUrl")
 
-    class Config:
-        populate_by_name = True  # snake_case와 camelCase 모두 허용
-        json_schema_extra = {
+    model_config = ConfigDict(
+        populate_by_name=True,  # snake_case와 camelCase 모두 허용
+        json_schema_extra={
             "example": {
                 "taskId": "550e8400-e29b-41d4-a716-446655440000",
                 "audioUrl": "https://s3.ap-northeast-2.amazonaws.com/bucket/test.wav?X-Amz-Algorithm=...",
@@ -35,6 +35,7 @@ class EvaluationRequest(BaseModel):
                 "callbackUrl": "https://server.crewvoice.cloud:8080/api/v1/evaluations/callback"
             }
         }
+    )
 
 
 class EvaluationAcceptedResponse(BaseModel):
@@ -46,13 +47,14 @@ class EvaluationAcceptedResponse(BaseModel):
     message: str = "Request received"
     task_id: str
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "message": "Request received",
                 "task_id": "550e8400-e29b-41d4-a716-446655440000"
             }
         }
+    )
 
 
 class ScoresPayload(BaseModel):
@@ -77,8 +79,8 @@ class CallbackSuccessPayload(BaseModel):
     scores: ScoresPayload
     feedback_summary: str
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "task_id": "550e8400-e29b-41d4-a716-446655440000",
                 "status": "completed",
@@ -94,6 +96,7 @@ class CallbackSuccessPayload(BaseModel):
                 "feedback_summary": "전반적으로 우수한 발음을 보였습니다. 억양 조절과 액센트 개선이 필요합니다."
             }
         }
+    )
 
 
 class CallbackFailurePayload(BaseModel):
@@ -106,11 +109,12 @@ class CallbackFailurePayload(BaseModel):
     status: str = "failed"
     error_message: str
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "task_id": "550e8400-e29b-41d4-a716-446655440000",
                 "status": "failed",
                 "error_message": "오디오 파일 다운로드 실패 (S3 403 Forbidden)"
             }
         }
+    )

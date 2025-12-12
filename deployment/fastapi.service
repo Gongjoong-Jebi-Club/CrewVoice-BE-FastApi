@@ -1,0 +1,39 @@
+[Unit]
+Description=CrewVoice FastAPI Evaluation Service
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/FastApi
+Environment="PATH=/home/ubuntu/FastApi/.venv/bin"
+EnvironmentFile=/home/ubuntu/FastApi/.env
+
+# FastAPI 실행 명령어
+# 워커 수: (CPU 코어 × 2) + 1 = 5 (t3.medium 2 vCPU 기준)
+ExecStart=/home/ubuntu/FastApi/.venv/bin/uvicorn app.main:app \
+    --host 127.0.0.1 \
+    --port 8000 \
+    --workers 5 \
+    --log-level info
+
+# 리소스 제한
+MemoryLimit=2G
+MemoryAccounting=yes
+CPUQuota=150%
+TasksMax=200
+
+# 자동 재시작 설정
+Restart=on-failure
+RestartSec=10
+StartLimitBurst=3
+StartLimitInterval=300s
+
+# 로깅
+StandardOutput=append:/var/log/fastapi/access.log
+StandardError=append:/var/log/fastapi/error.log
+
+[Install]
+WantedBy=multi-user.target
