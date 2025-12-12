@@ -4,7 +4,7 @@ name: FastAPI CI/CD to EC2 with GHCR
 
 on:
   push:
-    branches: [ "main" ] # main 브랜치에 push될 때 워크플로우를 실행합니다.
+    branches: ["main"] # main 브랜치에 push될 때 워크플로우를 실행합니다.
 
 permissions:
   contents: read
@@ -78,35 +78,30 @@ jobs:
 
             # GHCR에 로그인합니다.
             echo ${{ secrets.GITHUB_TOKEN }} | sudo docker login ghcr.io -u ${{ github.repository_owner }} --password-stdin
-            
+
             # 최신 이미지를 pull 받습니다.
             sudo docker pull $IMAGE_NAME:latest
 
             # Docker 네트워크를 생성합니다. (이미 존재하면 아무 작업도 하지 않음)
             sudo docker network create crewvoice-network || true
-            
+
             # 기존에 실행 중인 컨테이너가 있다면 중지하고 삭제합니다.
             sudo docker stop ${{ env.PROJECT_NAME }} || true
             sudo docker rm ${{ env.PROJECT_NAME }} || true
-            
+
             # (선택 사항) 사용하지 않는 오래된 이미지를 삭제하여 디스크 공간을 확보합니다.
             sudo docker image prune -af
-            
+
             # Kill any process using port 8000
             sudo fuser -k 8000/tcp || true
-            
+
             # 새 컨테이너를 실행합니다.
             # GitHub Secrets에 저장된 환경 변수들을 -e 옵션으로 주입합니다.
             sudo docker run -d --name ${{ env.PROJECT_NAME }} --network crewvoice-network \
               -p 8000:8000 \
-              -e DB_HOST='${{ secrets.DB_HOST }}' \
-              -e DB_NAME='${{ secrets.DB_NAME }}' \
-              -e DB_USERNAME='${{ secrets.DB_USERNAME }}' \
-              -e DB_PASSWORD='${{ secrets.DB_PASSWORD }}' \
-              -e REDIS_HOST='${{ secrets.REDIS_HOST }}' \
-              -e REDIS_PORT='${{ secrets.REDIS_PORT }}' \
-              -e S3_BUCKET_NAME=${{ secrets.S3_BUCKET_NAME }} \
-              -e AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }} \
-              -e AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }} \
-              -e BASE64_SECRET_KEY=${{ secrets.BASE64_SECRET_KEY }} \
+              -e AZURE_SPEECH_KEY='${{ secrets.AZURE_SPEECH_KEY }}' \
+              -e AZURE_SPEECH_REGION='${{ secrets.AZURE_SPEECH_REGION }}' \
+              -e OPENAI_API_KEY='${{ secrets.OPENAI_API_KEY }}' \
+              -e CALLBACK_API_KEY='${{ secrets.CALLBACK_API_KEY }}' \
+              -e DEBUG_SAVE_AUDIO='${{ secrets.DEBUG_SAVE_AUDIO }}' \
               --restart always $IMAGE_NAME:latest

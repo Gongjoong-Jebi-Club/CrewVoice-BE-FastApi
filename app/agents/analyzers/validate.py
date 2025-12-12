@@ -23,8 +23,9 @@ from dotenv import load_dotenv
 import azure.cognitiveservices.speech as speechsdk
 from difflib import SequenceMatcher
 
-# .env 파일 로드
-load_dotenv()
+# .env 파일 로드 (프로젝트 루트에서)
+# /app/.env (Docker) 또는 프로젝트 루트의 .env
+load_dotenv(dotenv_path=Path(__file__).parent.parent.parent.parent / ".env")
 
 # 로거 설정
 logger = logging.getLogger("uvicorn")
