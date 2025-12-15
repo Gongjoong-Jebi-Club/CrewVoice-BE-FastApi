@@ -8,9 +8,14 @@ RUN apt-get update && apt-get install -y \
     curl \
     libasound2 \
     libsndfile1 \
-    ffmpeg && \
+    ffmpeg \
+    default-jdk && \
     # apt 캐시를 정리하여 이미지 크기를 줄입니다.
     rm -rf /var/lib/apt/lists/*
+
+# Java 환경변수 설정 (KoNLPy의 Okt 형태소 분석기에 필요)
+ENV JAVA_HOME=/usr/lib/jvm/default-java
+ENV PATH="${JAVA_HOME}/bin:${PATH}"
 
 # 3. 작업 디렉토리 설정
 WORKDIR /app
