@@ -5,12 +5,16 @@ Accent Analysis Agent
 """
 import os
 import json
+import logging
 import librosa
 import parselmouth
 import numpy as np
 import azure.cognitiveservices.speech as speechsdk
 from typing import Dict, List, Tuple, Optional
 from pathlib import Path
+
+# 로거 설정
+logger = logging.getLogger("uvicorn")
 
 class AccentAnalyzer:
     """강조(Accent) 분석기"""
@@ -25,20 +29,20 @@ class AccentAnalyzer:
         Azure STT를 사용하여 단어별 타임스탬프 추출
         """
         try:
-            print(f"[ACCENT STT] 시작 - language: {language}")
+            logger.info(f"[ACCENT STT] 시작 - language: {language}")
             speech_key = os.getenv("SPEECH_KEY") or os.getenv("AZURE_SPEECH_KEY")
             speech_region = os.getenv("SPEECH_REGION") or os.getenv("AZURE_SPEECH_REGION")
 
             if not speech_key or not speech_region:
-                print("[ACCENT STT ERROR] Azure 키/리전이 없음")
+                logger.error("[ACCENT STT ERROR] Azure 키/리전이 없음")
                 return None
 
             # 에너지 기반 묵음 제거 (전처리)
-            print(f"[ACCENT STT] librosa로 오디오 로드 시작...")
+            logger.info(f"[ACCENT STT] librosa로 오디오 로드 시작...")
             y, sr = librosa.load(wav_path, sr=16000, mono=True)
-            print(f"[ACCENT STT] 오디오 로드 완료 - 길이: {len(y)/sr:.2f}초")
+            logger.info(f"[ACCENT STT] 오디오 로드 완료 - 길이: {len(y)/sr:.2f}초")
             trimmed_audio, _ = librosa.effects.trim(y, top_db=30)
-            print(f"[ACCENT STT] 묵음 제거 완료 - 트림 후 길이: {len(trimmed_audio)/sr:.2f}초")
+            logger.info(f"[ACCENT STT] 묵음 제거 완료 - 트림 후 길이: {len(trimmed_audio)/sr:.2f}초")
             
             # 임시 파일 저장 (Windows 호환성 위해 delete=False 사용 후 수동 삭제)
             import tempfile
@@ -50,13 +54,13 @@ class AccentAnalyzer:
             
             try:
                 # 데이터를 쓰고 파일 핸들을 닫음 (Windows file lock 해제)
-                print(f"[ACCENT STT] 임시 파일 생성: {trimmed_wav_path}")
+                logger.info(f"[ACCENT STT] 임시 파일 생성: {trimmed_wav_path}")
                 sf.write(tmp.name, trimmed_audio, sr)
                 tmp.close()
 
                 # language는 "ko-KR" 또는 "en-US" 형식으로 통일
                 lang_code = language
-                print(f"[ACCENT STT] Azure STT 설정 - lang_code: {lang_code}, region: {speech_region}")
+                logger.info(f"[ACCENT STT] Azure STT 설정 - lang_code: {lang_code}, region: {speech_region}")
                 speech_config = speechsdk.SpeechConfig(subscription=speech_key, region=speech_region)
                 speech_config.speech_recognition_language = lang_code
                 speech_config.request_word_level_timestamps()
@@ -67,7 +71,7 @@ class AccentAnalyzer:
 
                 audio_config = speechsdk.audio.AudioConfig(filename=trimmed_wav_path)
                 recognizer = speechsdk.SpeechRecognizer(speech_config=speech_config, audio_config=audio_config)
-                print(f"[ACCENT STT] Azure recognizer 생성 완료, 인식 시작...")
+                logger.info(f"[ACCENT STT] Azure recognizer 생성 완료, 인식 시작...")
 
                 all_timestamps = []
                 done = False
@@ -92,11 +96,11 @@ class AccentAnalyzer:
                 def handle_canceled(evt):
                     nonlocal done
                     # 취소/에러 로그
-                    print(f"[ACCENT STT CANCELED] {evt.result.cancellation_details}")
+                    logger.error(f"[ACCENT STT CANCELED] {evt.result.cancellation_details}")
                     if evt.result.cancellation_details:
-                        print(f"[ACCENT STT CANCELED] Reason: {evt.result.cancellation_details.reason}")
+                        logger.error(f"[ACCENT STT CANCELED] Reason: {evt.result.cancellation_details.reason}")
                         if hasattr(evt.result.cancellation_details, 'error_details'):
-                            print(f"[ACCENT STT CANCELED] Error: {evt.result.cancellation_details.error_details}")
+                            logger.error(f"[ACCENT STT CANCELED] Error: {evt.result.cancellation_details.error_details}")
                     done = True
 
                 def handle_stopped(evt):
@@ -116,11 +120,11 @@ class AccentAnalyzer:
 
                 recognizer.stop_continuous_recognition()
 
-                print(f"[ACCENT STT] 인식 완료 - 타임스탬프 개수: {len(all_timestamps)}")
+                logger.info(f"[ACCENT STT] 인식 완료 - 타임스탬프 개수: {len(all_timestamps)}")
                 if all_timestamps:
                     return all_timestamps
                 else:
-                    print(f"[ACCENT STT ERROR] 타임스탬프가 비어있음")
+                    logger.error(f"[ACCENT STT ERROR] 타임스탬프가 비어있음")
                     return None
 
             finally:
@@ -152,10 +156,10 @@ class AccentAnalyzer:
 
         except Exception as e:
             import traceback
-            print(f"[ACCENT STT ERROR] Azure STT 전체 실패")
-            print(f"[ACCENT STT ERROR] Exception type: {type(e).__name__}")
-            print(f"[ACCENT STT ERROR] Exception message: {e}")
-            print(f"[ACCENT STT ERROR] Full traceback:\n{traceback.format_exc()}")
+            logger.error(f"[ACCENT STT ERROR] Azure STT 전체 실패")
+            logger.error(f"[ACCENT STT ERROR] Exception type: {type(e).__name__}")
+            logger.error(f"[ACCENT STT ERROR] Exception message: {e}")
+            logger.error(f"[ACCENT STT ERROR] Full traceback:\n{traceback.format_exc()}")
             return None
 
     def _hz_to_semitone(self, freq_hz):
@@ -386,11 +390,11 @@ class AccentAnalyzer:
         """
         try:
             import os
-            print(f"[ACCENT DEBUG] 분석 시작 - wav_path: {wav_path}, language: {language}")
+            logger.info(f"[ACCENT DEBUG] 분석 시작 - wav_path: {wav_path}, language: {language}")
 
             # 파일 존재 확인
             if not os.path.exists(wav_path):
-                print(f"[ACCENT ERROR] 파일이 존재하지 않음: {wav_path}")
+                logger.error(f"[ACCENT ERROR] 파일이 존재하지 않음: {wav_path}")
                 return {
                     "score": 0,
                     "max_score": 100,
@@ -400,12 +404,12 @@ class AccentAnalyzer:
                 }
 
             file_size = os.path.getsize(wav_path)
-            print(f"[ACCENT DEBUG] 파일 크기: {file_size / 1024:.2f}KB")
+            logger.info(f"[ACCENT DEBUG] 파일 크기: {file_size / 1024:.2f}KB")
 
             # 1. STT 및 타임스탬프 추출
-            print(f"[ACCENT DEBUG] Azure STT 호출 시작...")
+            logger.info(f"[ACCENT DEBUG] Azure STT 호출 시작...")
             user_timestamps = self._get_timestamps_from_azure_stt(wav_path, language)
-            print(f"[ACCENT DEBUG] Azure STT 호출 완료 - 타임스탬프 개수: {len(user_timestamps) if user_timestamps else 0}")
+            logger.info(f"[ACCENT DEBUG] Azure STT 호출 완료 - 타임스탬프 개수: {len(user_timestamps) if user_timestamps else 0}")
 
             # 2. 필터링 (신뢰도, 길이, 지속시간)
             if user_timestamps:
@@ -414,17 +418,17 @@ class AccentAnalyzer:
                 min_duration = 0.1
                 
                 filtered = [
-                    t for t in user_timestamps 
-                    if t['confidence'] >= confidence_threshold 
-                    and len(t['word']) >= min_word_length 
+                    t for t in user_timestamps
+                    if t['confidence'] >= confidence_threshold
+                    and len(t['word']) >= min_word_length
                     and (t['end'] - t['start']) >= min_duration
                 ]
-                
-                print(f"[ACCENT DEBUG] 필터링 전: {len(user_timestamps)}개, 필터링 후: {len(filtered)}개")
+
+                logger.info(f"[ACCENT DEBUG] 필터링 전: {len(user_timestamps)}개, 필터링 후: {len(filtered)}개")
                 user_timestamps = filtered
 
             if not user_timestamps:
-                print(f"[ACCENT ERROR] 타임스탬프가 비어있음 (Azure STT 실패 또는 필터링 후 데이터 없음)")
+                logger.error(f"[ACCENT ERROR] 타임스탬프가 비어있음 (Azure STT 실패 또는 필터링 후 데이터 없음)")
                 return {
                     "score": 0,
                     "max_score": 100,
@@ -434,12 +438,12 @@ class AccentAnalyzer:
                 }
 
             # 3. 특징 추출 (dB, Semitone)
-            print(f"[ACCENT DEBUG] 오디오 특징 추출 시작...")
+            logger.info(f"[ACCENT DEBUG] 오디오 특징 추출 시작...")
             user_features = self.get_audio_features(wav_path, user_timestamps)
-            print(f"[ACCENT DEBUG] 오디오 특징 추출 완료 - 특징 개수: {len(user_features) if user_features else 0}")
+            logger.info(f"[ACCENT DEBUG] 오디오 특징 추출 완료 - 특징 개수: {len(user_features) if user_features else 0}")
 
             if not user_features:
-                print(f"[ACCENT ERROR] 오디오 특징 추출 실패 (librosa/parselmouth 문제 가능성)")
+                logger.error(f"[ACCENT ERROR] 오디오 특징 추출 실패 (librosa/parselmouth 문제 가능성)")
                 return {
                     "score": 0,
                     "max_score": 100,
@@ -473,8 +477,8 @@ class AccentAnalyzer:
 
         except Exception as e:
             import traceback
-            print(f"[ACCENT ERROR] 분석 중 오류 발생: {e}")
-            print(f"[ACCENT ERROR] Traceback:\n{traceback.format_exc()}")
+            logger.error(f"[ACCENT ERROR] 분석 중 오류 발생: {e}")
+            logger.error(f"[ACCENT ERROR] Traceback:\n{traceback.format_exc()}")
             return {
                 "score": 0,
                 "max_score": 100,

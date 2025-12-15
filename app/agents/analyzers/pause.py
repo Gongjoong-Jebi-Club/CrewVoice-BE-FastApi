@@ -4,8 +4,12 @@ Pause Analysis Agent
 """
 import json
 import os
+import logging
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Any
+
+# 로거 설정
+logger = logging.getLogger("uvicorn")
 
 # Azure는 pronunciation 에이전트에서 이미 호출되므로 여기서는 직접 분석
 
@@ -346,18 +350,18 @@ class PauseAnalyzer:
             self._ensure_baseline_loaded(baseline_path)
 
             # Debug logging
-            print(f"[PAUSE DEBUG] azure_data 수신: {azure_data is not None}")
+            logger.info(f"[PAUSE DEBUG] azure_data 수신: {azure_data is not None}")
             if azure_data:
-                print(f"[PAUSE DEBUG] azure_data keys: {azure_data.keys()}")
-                print(f"[PAUSE DEBUG] NBest 존재: {'NBest' in azure_data}")
+                logger.info(f"[PAUSE DEBUG] azure_data keys: {azure_data.keys()}")
+                logger.info(f"[PAUSE DEBUG] NBest 존재: {'NBest' in azure_data}")
                 if 'NBest' in azure_data:
-                    print(f"[PAUSE DEBUG] NBest 길이: {len(azure_data['NBest'])}")
-            print(f"[PAUSE DEBUG] validation_result 수신: {validation_result is not None}")
+                    logger.info(f"[PAUSE DEBUG] NBest 길이: {len(azure_data['NBest'])}")
+            logger.info(f"[PAUSE DEBUG] validation_result 수신: {validation_result is not None}")
             if validation_result:
-                print(f"[PAUSE DEBUG] validation_result keys: {validation_result.keys()}")
+                logger.info(f"[PAUSE DEBUG] validation_result keys: {validation_result.keys()}")
 
             if not azure_data or 'NBest' not in azure_data or len(azure_data['NBest']) == 0:
-                print(f"[PAUSE ERROR] Azure 데이터 검증 실패")
+                logger.error(f"[PAUSE ERROR] Azure 데이터 검증 실패")
                 return {
                     "score": 0,
                     "max_score": 100,
