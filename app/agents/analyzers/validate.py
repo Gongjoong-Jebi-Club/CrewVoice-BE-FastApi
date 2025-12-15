@@ -6,11 +6,12 @@ Pronunciation과 Pause 에이전트에서 재사용 가능
 
 검증 항목:
 - Completeness: 스크립트 단어를 얼마나 말했는가 (중복 포함, 90% 이상 필요)
-- Text Similarity: 스크립트와 얼마나 일치하는가 (SequenceMatcher 기반, 90% 이상 필요)
+- Text Similarity: 스크립트와 얼마나 일치하는가 (WER 기반, 90% 이상 필요)
 - 발음 품질은 검증하지 않음 (Pronunciation 에이전트에서 별도 평가)
 
 Note:
 - Completeness는 중복된 단어도 각각 카운트 (예: "안녕 안녕" → 2개 단어)
+- Text Similarity는 WER (Word Error Rate) 기반: 1 - WER
 - Azure의 Completeness는 참고용으로만 보존 (azure_completeness_score)
 """
 import os
@@ -21,7 +22,6 @@ from typing import Dict, Tuple
 from pathlib import Path
 from dotenv import load_dotenv
 import azure.cognitiveservices.speech as speechsdk
-from difflib import SequenceMatcher
 
 # .env 파일 로드 (로컬 개발 환경용)
 # 프로덕션(Docker)에서는 docker run -e 옵션으로 환경변수 주입
@@ -62,7 +62,7 @@ class ValidateAnalyzer:
 
         Returns:
             (validation_result, azure_data) 튜플
-            - validation_result: 검증 결과 딕셔너리
+            - validation_result: 검증 결과 딕셔너리 (WER 기반 유사도 포함)
             - azure_data: Pronunciation/Pause 에이전트용 Azure 원본 데이터
         """
         # Speech-to-Text 설정
@@ -237,7 +237,7 @@ class ValidateAnalyzer:
                 if all_words:
                     merged_azure_data['NBest'][0]['Words'] = all_words
 
-        # 텍스트 유사도 계산
+        # 텍스트 유사도 계산 (WER 기반)
         text_similarity = self._calculate_text_similarity(reference_text, full_recognized_text)
 
         # 단어 기반 Completeness 재계산
@@ -327,7 +327,16 @@ class ValidateAnalyzer:
         return completeness
 
     def _calculate_text_similarity(self, text1: str, text2: str) -> float:
-        """두 텍스트의 유사도 계산 (0.0 ~ 1.0)"""
+        """
+        두 텍스트의 유사도 계산 (WER 기반)
+
+        Args:
+            text1: 첫 번째 텍스트
+            text2: 두 번째 텍스트
+
+        Returns:
+            유사도 (0.0 ~ 1.0): 1 - WER
+        """
         # 정규화
         text1_clean = self._normalize_text(text1)
         text2_clean = self._normalize_text(text2)
@@ -335,7 +344,49 @@ class ValidateAnalyzer:
         if not text1_clean or not text2_clean:
             return 0.0
 
-        return SequenceMatcher(None, text1_clean, text2_clean).ratio()
+        # WER 기반 유사도: 1 - WER
+        wer = self._calculate_wer(text1_clean, text2_clean)
+        return max(0.0, 1.0 - wer)
+
+    def _calculate_wer(self, reference: str, hypothesis: str) -> float:
+        """
+        Word Error Rate (WER) 계산
+        Levenshtein distance 기반
+
+        Args:
+            reference: 참조 텍스트 (정규화된 상태)
+            hypothesis: 인식 텍스트 (정규화된 상태)
+
+        Returns:
+            WER (0.0 ~ 1.0+, 낮을수록 좋음)
+        """
+        ref_words = reference.split()
+        hyp_words = hypothesis.split()
+
+        # Levenshtein distance 계산 (DP)
+        m, n = len(ref_words), len(hyp_words)
+        dp = [[0] * (n + 1) for _ in range(m + 1)]
+
+        # 초기화
+        for i in range(m + 1):
+            dp[i][0] = i
+        for j in range(n + 1):
+            dp[0][j] = j
+
+        # DP 계산
+        for i in range(1, m + 1):
+            for j in range(1, n + 1):
+                if ref_words[i-1] == hyp_words[j-1]:
+                    dp[i][j] = dp[i-1][j-1]
+                else:
+                    dp[i][j] = min(
+                        dp[i-1][j] + 1,    # 삭제
+                        dp[i][j-1] + 1,    # 삽입
+                        dp[i-1][j-1] + 1   # 치환
+                    )
+
+        wer = dp[m][n] / m if m > 0 else 0.0
+        return wer
 
     def _validate_speech(
         self,
@@ -361,7 +412,7 @@ class ValidateAnalyzer:
         print(f"Reference: {reference_text[:50]}...")
         print(f"Recognized: {recognized_text[:50]}...")
         print(f"Completeness (Word-based): {completeness_score:.2f}%")
-        print(f"Similarity (SequenceMatcher): {text_similarity*100:.2f}%")
+        print(f"Similarity (WER-based): {text_similarity*100:.2f}%")
 
         # 1. 완전성 검사 (스크립트를 얼마나 말했나)
         if completeness_score < self.COMPLETENESS_THRESHOLD:

@@ -273,25 +273,53 @@ class IntonationAnalyzer:
             }
 
     def compare_with_reference(self, test_feat, ref_feat, lang="en-US"):
-        """기준 JSON 기반으로 점수 산출 (언어별 가중치 적용)"""
+        """기준 JSON 기반으로 점수 산출 (언어별 가중치 적용)
+
+        새 형식(mean/std)과 기존 형식(단일 값) 모두 지원
+        """
 
         # 언어별 가중치 가져오기
         weights = self.get_language_specific_weights(lang)
 
-        # 기준값 추출
+        # 기준값 추출 (새 형식: {"mean": X, "std": Y}, 기존 형식: X)
         ref_values = {}
+        ref_stds = {}
+
         for key in weights.keys():
-            ref_values[key] = ref_feat.get(key, test_feat.get(key, 1))
+            ref_data = ref_feat.get(key)
+
+            if isinstance(ref_data, dict) and "mean" in ref_data:
+                # 새 형식: mean/std 사용
+                ref_values[key] = ref_data["mean"]
+                ref_stds[key] = ref_data.get("std", 0)
+            else:
+                # 기존 형식: 단일 값 사용
+                ref_values[key] = ref_data if ref_data is not None else test_feat.get(key, 1)
+                ref_stds[key] = 0
 
         max_scores = {k: w * 20 for k, w in weights.items()}
 
-        # 유사도 계산
+        # 유사도 계산 (표준편차 고려)
         diffs = {}
         similarities = {}
+
         for k in weights.keys():
             if k in test_feat and ref_values[k] > 0:
-                diffs[k] = abs(test_feat[k] - ref_values[k]) / (ref_values[k] + 1e-6)
-                similarities[k] = max(0, 1 - diffs[k])
+                ref_mean = ref_values[k]
+                ref_std = ref_stds[k]
+                test_val = test_feat[k]
+
+                # 표준편차가 있으면 정규화된 거리 사용 (더 관대한 평가)
+                if ref_std > 0:
+                    # z-score 기반: |test - mean| / std
+                    # std 범위 내면 similarity 높게, 벗어날수록 낮게
+                    z_score = abs(test_val - ref_mean) / ref_std
+                    # z_score 0 -> similarity 1, z_score 3 -> similarity 0.5, z_score 6 -> similarity 0
+                    similarities[k] = max(0, 1 - z_score / 6)
+                else:
+                    # 표준편차 없으면 기존 방식 (상대 차이)
+                    diffs[k] = abs(test_val - ref_mean) / (ref_mean + 1e-6)
+                    similarities[k] = max(0, 1 - diffs[k])
             else:
                 similarities[k] = 0
 
@@ -317,6 +345,8 @@ class IntonationAnalyzer:
             accent_timestamps: Accent 에이전트의 타임스탬프 데이터 (재사용용)
         """
         # Accent 데이터가 있으면 재사용
+        print(f"[INTONATION DEBUG] accent_timestamps 수신: {accent_timestamps is not None}, 개수: {len(accent_timestamps) if accent_timestamps else 0}")
+
         if accent_timestamps:
             try:
                 # Accent 데이터에서 Confidence 추출
@@ -334,6 +364,8 @@ class IntonationAnalyzer:
                     asr_confidence_std = float(np.std(confidences))
                     recognized_text = " ".join(words)
 
+                    print(f"[INTONATION DEBUG] Accent 데이터 재사용 성공! confidence_mean={asr_confidence_mean:.4f}")
+
                     # WER 계산 (reference_text가 있을 때만)
                     asr_wer = 0.0
                     if reference_text and recognized_text:
@@ -350,8 +382,10 @@ class IntonationAnalyzer:
                         "recognized_text": recognized_text,
                         "asr_status": "reused_from_accent"
                     }
+                else:
+                    print(f"[INTONATION DEBUG] Accent 데이터에서 confidence를 추출하지 못함")
             except Exception as e:
-                print(f"Accent 데이터 재사용 중 오류: {e}. Azure API 직접 호출로 전환합니다.")
+                print(f"[INTONATION DEBUG] Accent 데이터 재사용 중 오류: {e}. Azure API 직접 호출로 전환합니다.")
 
         # Accent 데이터가 없거나 재사용 실패 시 직접 Azure API 호출
         try:
@@ -462,8 +496,8 @@ class IntonationAnalyzer:
 
         # 3. 신뢰성 (Reliability): 안정적이고 일관된 억양
         reliability_score = (
-            0.4 * (100 - min(metrics.get("f0_std", 0) / 50 * 100, 100)) +  # F0 변동성 (너무 크면 감점)
-            0.3 * (100 - min(metrics.get("energy_std", 0) / 0.2 * 100, 100)) +  # Energy 변동성
+            0.4 * (100 - min(metrics.get("f0_std", 0) / 100 * 100, 100)) +  # F0 변동성 (표현력 고려하여 완화)
+            0.3 * (100 - min(metrics.get("energy_std", 0) / 0.4 * 100, 100)) +  # Energy 변동성 (표현력 고려하여 완화)
             0.3 * (100 - asr_metrics.get("asr_confidence_std", 0) * 200)  # ASR 신뢰도 변동 (작을수록 좋음)
         )
 
@@ -548,12 +582,13 @@ class IntonationAnalyzer:
         self.baseline_cache[baseline_name] = baseline
         return baseline
 
-    def analyze(self, wav_path: str, reference_text: str = None, baseline_name: str = "default", language_code: str = None, scenario: str = "general", weight_baseline: float = 0.7, weight_iso: float = 0.3, accent_timestamps: list = None, **kwargs) -> Dict:
+    def analyze(self, wav_path: str, gender: str = "F", reference_text: str = None, baseline_name: str = "default", language_code: str = None, scenario: str = "general", weight_baseline: float = 0.7, weight_iso: float = 0.3, accent_timestamps: list = None, **kwargs) -> Dict:
         """
         억양 분석 수행 (ISO 25000 + 논문 기반)
 
         Args:
             wav_path: WAV 파일 경로
+            gender: 성별 (F 또는 M, 기본값: F)
             reference_text: 참조 텍스트 (WER 계산용, 선택)
             baseline_name: Baseline 이름
             language_code: 언어 코드 (선택적, 없으면 파일명 기반 판별)
@@ -591,13 +626,28 @@ class IntonationAnalyzer:
             # 6. 최종 점수 계산 (ISO 25000 기반)
             final_score_iso = self._compute_final_score_from_quality(quality_scores, quality_weights)
 
-            # 7. 기존 Baseline 비교 (하위 호환성 유지)
+            # 7. 기존 Baseline 비교 (Gender/Language별 지원 + 하위 호환성 유지)
             baseline = self.load_baseline(baseline_name)
             baseline_score = 0
-            if baseline and "reference_features" in baseline:
-                ref_features = baseline["reference_features"]
-                score_20, item_scores = self.compare_with_reference(test_features, ref_features, lang)
-                baseline_score = (score_20 / 20) * 100
+            if baseline:
+                # 새 포맷: Gender/Language별 구조
+                if "genders" in baseline:
+                    # Gender → Language → Features 탐색
+                    if gender in baseline["genders"]:
+                        if lang in baseline["genders"][gender]["languages"]:
+                            ref_features = baseline["genders"][gender]["languages"][lang]["features"]
+                            score_20, item_scores = self.compare_with_reference(test_features, ref_features, lang)
+                            baseline_score = (score_20 / 20) * 100
+                        else:
+                            print(f"[INTONATION WARNING] Baseline에 언어 {lang}가 없습니다 (gender={gender})")
+                    else:
+                        print(f"[INTONATION WARNING] Baseline에 gender {gender}가 없습니다")
+
+                # 기존 포맷: reference_features 직접 사용
+                elif "reference_features" in baseline:
+                    ref_features = baseline["reference_features"]
+                    score_20, item_scores = self.compare_with_reference(test_features, ref_features, lang)
+                    baseline_score = (score_20 / 20) * 100
 
             # 8. 최종 점수: Baseline 우선, ISO는 보조 역할
             # Baseline이 있으면 가중치 적용, 없으면 ISO 100%

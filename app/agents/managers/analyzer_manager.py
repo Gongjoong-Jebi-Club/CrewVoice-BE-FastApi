@@ -157,14 +157,16 @@ class SpeechAnalysisManager:
                 )
 
             elif agent_name == "intonation":
-                # Azure API 호출 없이 음향 특징만 분석 (language_code, 가중치 파라미터 전달)
+                # Accent 데이터 재사용으로 Azure API 중복 호출 방지 (language_code, gender, 가중치 파라미터 전달)
                 result = agent.analyze(
                     wav_path,
+                    gender=kwargs.get("gender", "F"),  # 성별 파라미터 추가
                     reference_text=kwargs.get("reference_text"),
                     baseline_name=kwargs.get("baseline_name", "default"),
                     language_code=kwargs.get("language_code", "ko-KR"),
                     weight_baseline=kwargs.get("weight_baseline", 0.7),
-                    weight_iso=kwargs.get("weight_iso", 0.3)
+                    weight_iso=kwargs.get("weight_iso", 0.3),
+                    accent_timestamps=kwargs.get("accent_timestamps")  # Accent 타임스탬프 데이터 전달
                 )
 
             elif agent_name == "speed":

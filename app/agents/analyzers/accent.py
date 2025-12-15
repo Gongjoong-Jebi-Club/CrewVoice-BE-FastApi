@@ -309,8 +309,17 @@ class AccentAnalyzer:
         pitch_values = np.array([user_features[i]['features']['pitch_st'] for i in valid_pitch_indices])
         pitch_words = [words[i] for i in valid_pitch_indices]
 
-        # Energy: 모든 단어 유효
-        energy_values = np.array([item['features']['energy_db'] for item in user_features])
+        # Energy: 모든 단어 유효 (단, 너무 낮은 에너지는 노이즈/묵음으로 간주하여 제외)
+        # 정규화된 오디오(0dB Max)에서 -50dB 미만은 거의 들리지 않는 수준이므로 통계 왜곡 방지
+        raw_energy_values = np.array([item['features']['energy_db'] for item in user_features])
+
+        valid_energy_mask = raw_energy_values > -50.0
+        if np.sum(valid_energy_mask) > 2:
+            energy_values = raw_energy_values[valid_energy_mask]
+            energy_words = [words[i] for i in range(len(words)) if valid_energy_mask[i]]
+        else:
+            energy_values = raw_energy_values
+            energy_words = words
 
         # --- 가중 표준편차(Weighted SD) 계산 함수 ---
         def calculate_weighted_std(values, word_list_for_weights):
@@ -325,7 +334,7 @@ class AccentAnalyzer:
 
         # 측정된 표준편차 (변화량)
         measured_pitch_sd = calculate_weighted_std(pitch_values, pitch_words)
-        measured_energy_sd = calculate_weighted_std(energy_values, words)
+        measured_energy_sd = calculate_weighted_std(energy_values, energy_words)
 
         # --- 점수 매핑 (Gaussian Scoring) ---
         # 논문/연구 기반 이상적인 낭독체의 SD 범위 중앙값
@@ -334,7 +343,7 @@ class AccentAnalyzer:
 
         # Sigma: 점수 관대함 정도 (클수록 점수가 천천히 떨어짐)
         sigma_pitch = 2.0
-        sigma_energy = 2.5
+        sigma_energy = 4.0  # 2.5 -> 4.0 (에너지 변동성 허용 범위 확대)
 
         score_pitch = self._gaussian_score(measured_pitch_sd, target_pitch_sd, sigma_pitch) * 100
         score_energy = self._gaussian_score(measured_energy_sd, target_energy_sd, sigma_energy) * 100
