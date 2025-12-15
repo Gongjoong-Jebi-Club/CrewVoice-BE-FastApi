@@ -344,7 +344,20 @@ class PauseAnalyzer:
         try:
             # Baseline 로드
             self._ensure_baseline_loaded(baseline_path)
+
+            # Debug logging
+            print(f"[PAUSE DEBUG] azure_data 수신: {azure_data is not None}")
+            if azure_data:
+                print(f"[PAUSE DEBUG] azure_data keys: {azure_data.keys()}")
+                print(f"[PAUSE DEBUG] NBest 존재: {'NBest' in azure_data}")
+                if 'NBest' in azure_data:
+                    print(f"[PAUSE DEBUG] NBest 길이: {len(azure_data['NBest'])}")
+            print(f"[PAUSE DEBUG] validation_result 수신: {validation_result is not None}")
+            if validation_result:
+                print(f"[PAUSE DEBUG] validation_result keys: {validation_result.keys()}")
+
             if not azure_data or 'NBest' not in azure_data or len(azure_data['NBest']) == 0:
+                print(f"[PAUSE ERROR] Azure 데이터 검증 실패")
                 return {
                     "score": 0,
                     "max_score": 100,
