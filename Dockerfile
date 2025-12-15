@@ -4,7 +4,11 @@ FROM python:3.12-slim
 # 2. 시스템 패키지 설치 (curl)
 # python:slim 이미지는 매우 가벼워서 curl이 기본 포함되어 있지 않습니다.
 # apt-get을 사용하여 curl을 먼저 설치합니다.
-RUN apt-get update && apt-get install -y curl && \
+RUN apt-get update && apt-get install -y \
+    curl \
+    libasound2 \
+    libsndfile1 \
+    ffmpeg && \
     # apt 캐시를 정리하여 이미지 크기를 줄입니다.
     rm -rf /var/lib/apt/lists/*
 
@@ -35,4 +39,5 @@ EXPOSE 8000
 # 8. 애플리케이션 실행
 # --host 0.0.0.0 옵션은 컨테이너 외부에서 접근 가능하도록 합니다.
 # 환경변수는 docker run -e 옵션 또는 --env-file로 주입됩니다.
+
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
