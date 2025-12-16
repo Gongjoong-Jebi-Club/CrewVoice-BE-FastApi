@@ -206,7 +206,7 @@ async def process_evaluation_async(request: EvaluationRequest):
             task_id=request.task_id,
             status="completed",
             scores=scores_payload,
-            feedback_summary=feedback_summary[:500]  # 최대 500자
+            feedback_summary=feedback_summary # 글자 수 제한 제거
         )
 
         logger.info(f"[{request.task_id}] 평가 완료 - overall_score: {overall_score:.2f}")
