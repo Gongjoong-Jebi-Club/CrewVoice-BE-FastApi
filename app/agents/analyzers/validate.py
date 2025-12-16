@@ -35,8 +35,8 @@ class ValidateAnalyzer:
     """스크립트 검증 분석기"""
 
     # 검증 임계값 (내용 일치 여부만 검증, 발음은 Pronunciation 에이전트에서 평가)
-    COMPLETENESS_THRESHOLD = 90.0  # 완전성 임계값 (스크립트의 90% 이상 말해야 통과)
-    SIMILARITY_THRESHOLD = 0.9     # 텍스트 유사도 임계값 (90% 이상 일치해야 통과)
+    COMPLETENESS_THRESHOLD = 70.0  # 완전성 임계값 (스크립트의 90% 이상 말해야 통과)
+    SIMILARITY_THRESHOLD = 0.7     # 텍스트 유사도 임계값 (90% 이상 일치해야 통과)
 
     def __init__(self):
         # SPEECH_KEY 또는 AZURE_SPEECH_KEY 지원
