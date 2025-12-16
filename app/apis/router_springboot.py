@@ -132,13 +132,34 @@ async def process_evaluation_async(request: EvaluationRequest):
         # 2. 음성 분석 실행 (5분 타임아웃)
         logger.info(f"[{request.task_id}] 음성 분석 시작...")
 
+        # 가중치 파라미터 추출 및 kwargs 구성
+        kwargs = {
+            "reference_text": request.script,
+            "language_code": request.language
+        }
+
+        if request.weights:
+            # WeightsConfig의 모든 필드를 kwargs에 추가
+            weights_dict = request.weights.model_dump(exclude_none=True)
+            kwargs.update(weights_dict)
+            logger.info(f"[{request.task_id}] 커스텀 가중치 적용: {list(weights_dict.keys())}")
+
+            # 각 평가요소별 가중치 로깅 (디버깅용)
+            logger.info(f"[{request.task_id}] Tone 가중치: clarity={weights_dict.get('weight_clarity')}, stability={weights_dict.get('weight_stability')}, brightness={weights_dict.get('weight_brightness')}, pitch_position={weights_dict.get('weight_pitch_position')}")
+            logger.info(f"[{request.task_id}] Pause 가중치: fluency={weights_dict.get('weight_fluency')}, position={weights_dict.get('weight_position')}, length={weights_dict.get('weight_length')}")
+            logger.info(f"[{request.task_id}] Accent 가중치: pitch={weights_dict.get('weight_pitch')}, energy={weights_dict.get('weight_energy')}")
+            logger.info(f"[{request.task_id}] Intonation 가중치: baseline={weights_dict.get('weight_baseline')}, iso={weights_dict.get('weight_iso')}")
+            logger.info(f"[{request.task_id}] Speed 파라미터: deviation_threshold={weights_dict.get('deviation_threshold')}")
+            logger.info(f"[{request.task_id}] 성별: gender={weights_dict.get('gender')}")
+        else:
+            logger.info(f"[{request.task_id}] 기본 가중치 사용")
+
         # asyncio.wait_for로 타임아웃 처리
         result = await asyncio.wait_for(
             asyncio.to_thread(
                 analyzer_manager.analyze_parallel,
                 wav_path=tmp_path,
-                reference_text=request.script,
-                language_code=request.language
+                **kwargs  # 가중치 파라미터 전달
             ),
             timeout=300  # 5분
         )
