@@ -170,10 +170,10 @@ class SpeechAnalysisManager:
                 )
 
             elif agent_name == "speed":
-                # Speed: max_deduction 파라미터 전달
+                # Speed: deviation_threshold 파라미터 전달 (max_deduction으로 변환)
                 result = agent.analyze(
                     wav_path,
-                    max_deduction=kwargs.get("max_deduction", 5.0)
+                    max_deduction=kwargs.get("deviation_threshold", kwargs.get("max_deduction", 5.0))
                 )
 
             elif agent_name == "tone":

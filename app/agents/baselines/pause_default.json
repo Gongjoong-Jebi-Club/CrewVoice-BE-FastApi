@@ -1,0 +1,160 @@
+{
+  "agent": "pause",
+  "created_at": "2025-12-09T15:56:55.557043",
+  "languages": {
+    "en-US": {
+      "min_pause_threshold": 0.1,
+      "mid_phrase_breath_criteria": {
+        "min_prev_phrase_duration_sec": 3.85,
+        "min_words_since_last_pause": 1
+      },
+      "good_pause_ratio": {
+        "mean": 0.606,
+        "std": 0.066
+      },
+      "contexts": {
+        "mid_phrase_breath": {
+          "features": {
+            "pause_sec": {
+              "mean": 0.546,
+              "std": 1.292
+            },
+            "prev_phrase_duration_sec": {
+              "mean": 5.279,
+              "std": 1.82
+            },
+            "words_since_last_pause": {
+              "mean": 1.0,
+              "std": 0.0
+            }
+          }
+        },
+        "mid_phrase": {
+          "features": {
+            "pause_sec": {
+              "mean": 0.101,
+              "std": 0.016
+            },
+            "prev_phrase_duration_sec": {
+              "mean": 1.83,
+              "std": 0.601
+            },
+            "words_since_last_pause": {
+              "mean": 1.0,
+              "std": 0.0
+            }
+          }
+        },
+        "after_comma": {
+          "features": {
+            "pause_sec": {
+              "mean": 0.989,
+              "std": 1.369
+            },
+            "prev_phrase_duration_sec": {
+              "mean": 6.015,
+              "std": 2.616
+            },
+            "words_since_last_pause": {
+              "mean": 1.0,
+              "std": 0.0
+            }
+          }
+        },
+        "after_period": {
+          "features": {
+            "pause_sec": {
+              "mean": 1.717,
+              "std": 2.449
+            },
+            "prev_phrase_duration_sec": {
+              "mean": 4.663,
+              "std": 2.826
+            },
+            "words_since_last_pause": {
+              "mean": 1.0,
+              "std": 0.0
+            }
+          }
+        }
+      }
+    },
+    "ko-KR": {
+      "min_pause_threshold": 0.1,
+      "mid_phrase_breath_criteria": {
+        "min_prev_phrase_duration_sec": 4.1,
+        "min_words_since_last_pause": 1
+      },
+      "good_pause_ratio": {
+        "mean": 0.829,
+        "std": 0.067
+      },
+      "contexts": {
+        "mid_phrase_breath": {
+          "features": {
+            "pause_sec": {
+              "mean": 0.435,
+              "std": 1.141
+            },
+            "prev_phrase_duration_sec": {
+              "mean": 5.587,
+              "std": 1.97
+            },
+            "words_since_last_pause": {
+              "mean": 1.0,
+              "std": 0.0
+            }
+          }
+        },
+        "after_period": {
+          "features": {
+            "pause_sec": {
+              "mean": 0.579,
+              "std": 1.412
+            },
+            "prev_phrase_duration_sec": {
+              "mean": 5.14,
+              "std": 2.147
+            },
+            "words_since_last_pause": {
+              "mean": 1.0,
+              "std": 0.0
+            }
+          }
+        },
+        "mid_phrase": {
+          "features": {
+            "pause_sec": {
+              "mean": 0.1,
+              "std": 0.0
+            },
+            "prev_phrase_duration_sec": {
+              "mean": 1.978,
+              "std": 0.607
+            },
+            "words_since_last_pause": {
+              "mean": 1.0,
+              "std": 0.0
+            }
+          }
+        },
+        "after_comma": {
+          "features": {
+            "pause_sec": {
+              "mean": 0.125,
+              "std": 0.083
+            },
+            "prev_phrase_duration_sec": {
+              "mean": 5.242,
+              "std": 1.984
+            },
+            "words_since_last_pause": {
+              "mean": 1.0,
+              "std": 0.0
+            }
+          }
+        }
+      }
+    }
+  }
+}

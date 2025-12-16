@@ -7,118 +7,122 @@ from typing import Optional
 
 class WeightsConfig(BaseModel):
     """
-    평가 요소별 가중치 설정
+    평가 가중치 설정 (SpringBoot → FastAPI)
 
-    SpringBoot 제약 조건:
-    - 가중치 범위: 0.0 ~ 1.0, 0.05 단위 (0.0, 0.05, 0.10, ..., 0.95, 1.0)
-    - 각 평가요소별 가중치 합 = 1.0
-    - Speed 편차: 5.0 ~ 10.0, 0.5 단위
+    모든 필드는 Optional (전달하지 않으면 analyzer 기본값 사용)
+
+    제약 조건:
+    - 일반 가중치: 0.0 ~ 1.0, 0.05 단위
+    - Speed deviation_threshold: 5.0 ~ 10.0, 0.5 단위
+    - 평가요소별 가중치 합 = 1.0
     """
+    # Tone 가중치 (합 = 1.0)
+    weight_clarity: Optional[float] = Field(None, ge=0.0, le=1.0)
+    weight_stability: Optional[float] = Field(None, ge=0.0, le=1.0)
+    weight_brightness: Optional[float] = Field(None, ge=0.0, le=1.0)
+    weight_pitch_position: Optional[float] = Field(None, ge=0.0, le=1.0)
 
-    # === Tone (톤) 가중치 - 합 = 1.0 ===
-    weight_clarity: float = Field(..., ge=0.0, le=1.0, description="명료도 (0.0~1.0, 0.05 단위)")
-    weight_stability: float = Field(..., ge=0.0, le=1.0, description="안정성 (0.0~1.0, 0.05 단위)")
-    weight_brightness: float = Field(..., ge=0.0, le=1.0, description="밝기 (0.0~1.0, 0.05 단위)")
-    weight_pitch_position: float = Field(..., ge=0.0, le=1.0, description="음높이 위치 (0.0~1.0, 0.05 단위)")
+    # Pause 가중치 (합 = 1.0)
+    weight_fluency: Optional[float] = Field(None, ge=0.0, le=1.0)
+    weight_position: Optional[float] = Field(None, ge=0.0, le=1.0)
+    weight_length: Optional[float] = Field(None, ge=0.0, le=1.0)
 
-    # === Pause (휴지) 가중치 - 합 = 1.0 ===
-    weight_fluency: float = Field(..., ge=0.0, le=1.0, description="유창성 (0.0~1.0, 0.05 단위)")
-    weight_position: float = Field(..., ge=0.0, le=1.0, description="Pause 위치 (0.0~1.0, 0.05 단위)")
-    weight_length: float = Field(..., ge=0.0, le=1.0, description="Pause 길이 (0.0~1.0, 0.05 단위)")
+    # Accent 가중치 (합 = 1.0)
+    weight_pitch: Optional[float] = Field(None, ge=0.0, le=1.0)
+    weight_energy: Optional[float] = Field(None, ge=0.0, le=1.0)
 
-    # === Accent (강조) 가중치 - 합 = 1.0 ===
-    weight_pitch: float = Field(..., ge=0.0, le=1.0, description="음높이 변화 (0.0~1.0, 0.05 단위)")
-    weight_energy: float = Field(..., ge=0.0, le=1.0, description="강약 변화 (0.0~1.0, 0.05 단위)")
+    # Intonation 가중치 (합 = 1.0)
+    weight_baseline: Optional[float] = Field(None, ge=0.0, le=1.0)
+    weight_iso: Optional[float] = Field(None, ge=0.0, le=1.0)
 
-    # === Intonation (억양) 가중치 - 합 = 1.0 ===
-    weight_baseline: float = Field(..., ge=0.0, le=1.0, description="음성 억양 피치 지표 (0.0~1.0, 0.05 단위)")
-    weight_iso: float = Field(..., ge=0.0, le=1.0, description="ISO 25000 점수 (0.0~1.0, 0.05 단위)")
+    # Speed 편차 임계값 (5.0 ~ 10.0, 0.5 단위)
+    deviation_threshold: Optional[float] = Field(None, ge=5.0, le=10.0)
 
-    # === Speed (속도) 파라미터 ===
-    deviation_threshold: float = Field(..., ge=5.0, le=10.0, description="편차 허용도 (5.0~10.0, 0.5 단위)")
-
-    # === 공통 파라미터 ===
-    gender: str = Field(..., pattern="^[MF]$", description="성별 (M 또는 F)")
+    # 성별 (Tone, Intonation에서 사용)
+    gender: Optional[str] = Field(None, pattern="^(M|F)$")
 
     @model_validator(mode='after')
     def validate_weights(self):
-        """가중치 합 및 단위 검증"""
-
-        # Tone 가중치 합 검증
-        tone_sum = round(
-            self.weight_clarity +
-            self.weight_stability +
-            self.weight_brightness +
-            self.weight_pitch_position,
-            2
-        )
-        if abs(tone_sum - 1.0) > 0.01:
-            raise ValueError(
-                f"Tone 가중치의 합이 1.0이 아닙니다: {tone_sum} "
-                f"(clarity={self.weight_clarity}, stability={self.weight_stability}, "
-                f"brightness={self.weight_brightness}, pitch_position={self.weight_pitch_position})"
-            )
-
-        # Pause 가중치 합 검증
-        pause_sum = round(
-            self.weight_fluency +
-            self.weight_position +
-            self.weight_length,
-            2
-        )
-        if abs(pause_sum - 1.0) > 0.01:
-            raise ValueError(
-                f"Pause 가중치의 합이 1.0이 아닙니다: {pause_sum} "
-                f"(fluency={self.weight_fluency}, position={self.weight_position}, length={self.weight_length})"
-            )
-
-        # Accent 가중치 합 검증
-        accent_sum = round(self.weight_pitch + self.weight_energy, 2)
-        if abs(accent_sum - 1.0) > 0.01:
-            raise ValueError(
-                f"Accent 가중치의 합이 1.0이 아닙니다: {accent_sum} "
-                f"(pitch={self.weight_pitch}, energy={self.weight_energy})"
-            )
-
-        # Intonation 가중치 합 검증
-        intonation_sum = round(self.weight_baseline + self.weight_iso, 2)
-        if abs(intonation_sum - 1.0) > 0.01:
-            raise ValueError(
-                f"Intonation 가중치의 합이 1.0이 아닙니다: {intonation_sum} "
-                f"(baseline={self.weight_baseline}, iso={self.weight_iso})"
-            )
+        """가중치 검증: 0.05 단위 + 카테고리별 합=1.0"""
 
         # 0.05 단위 검증 (일반 가중치)
         weight_fields = [
-            ('weight_clarity', self.weight_clarity),
-            ('weight_stability', self.weight_stability),
-            ('weight_brightness', self.weight_brightness),
-            ('weight_pitch_position', self.weight_pitch_position),
-            ('weight_fluency', self.weight_fluency),
-            ('weight_position', self.weight_position),
-            ('weight_length', self.weight_length),
-            ('weight_pitch', self.weight_pitch),
-            ('weight_energy', self.weight_energy),
-            ('weight_baseline', self.weight_baseline),
-            ('weight_iso', self.weight_iso),
+            ("weight_clarity", self.weight_clarity),
+            ("weight_stability", self.weight_stability),
+            ("weight_brightness", self.weight_brightness),
+            ("weight_pitch_position", self.weight_pitch_position),
+            ("weight_fluency", self.weight_fluency),
+            ("weight_position", self.weight_position),
+            ("weight_length", self.weight_length),
+            ("weight_pitch", self.weight_pitch),
+            ("weight_energy", self.weight_energy),
+            ("weight_baseline", self.weight_baseline),
+            ("weight_iso", self.weight_iso),
         ]
 
         for field_name, value in weight_fields:
-            # 0.05 단위인지 확인 (부동소수점 오차 허용)
-            remainder = round((value * 100) % 5, 2)
-            if remainder != 0.0:
-                raise ValueError(
-                    f"{field_name}은 0.05 단위여야 합니다: {value} "
-                    f"(가능한 값: 0.0, 0.05, 0.10, 0.15, ..., 0.95, 1.0)"
-                )
+            if value is not None:
+                # 0.05 단위 검증 (오차 허용: 0.001)
+                remainder = round((value * 100) % 5, 2)
+                if remainder != 0.0:
+                    raise ValueError(f"{field_name}은 0.05 단위여야 합니다 (현재: {value}, remainder: {remainder})")
 
-        # Speed 편차 허용도 0.5 단위 검증
-        deviation_remainder = round((self.deviation_threshold * 10) % 5, 2)
-        if deviation_remainder != 0.0:
-            raise ValueError(
-                f"deviation_threshold는 0.5 단위여야 합니다: {self.deviation_threshold} "
-                f"(가능한 값: 5.0, 5.5, 6.0, 6.5, ..., 9.5, 10.0)"
+        # Speed deviation_threshold 0.5 단위 검증
+        if self.deviation_threshold is not None:
+            remainder = round((self.deviation_threshold * 10) % 5, 2)
+            if remainder != 0.0:
+                raise ValueError(f"deviation_threshold는 0.5 단위여야 합니다 (현재: {self.deviation_threshold})")
+
+        # 카테고리별 가중치 합 = 1.0 검증
+        # Tone 가중치 합 검증 (4개 모두 있을 때만)
+        if all([self.weight_clarity is not None,
+                self.weight_stability is not None,
+                self.weight_brightness is not None,
+                self.weight_pitch_position is not None]):
+            tone_sum = round(
+                self.weight_clarity +
+                self.weight_stability +
+                self.weight_brightness +
+                self.weight_pitch_position,
+                2
             )
+            if abs(tone_sum - 1.0) > 0.01:
+                raise ValueError(f"Tone 가중치의 합이 1.0이 아닙니다: {tone_sum}")
+
+        # Pause 가중치 합 검증 (3개 모두 있을 때만)
+        if all([self.weight_fluency is not None,
+                self.weight_position is not None,
+                self.weight_length is not None]):
+            pause_sum = round(
+                self.weight_fluency +
+                self.weight_position +
+                self.weight_length,
+                2
+            )
+            if abs(pause_sum - 1.0) > 0.01:
+                raise ValueError(f"Pause 가중치의 합이 1.0이 아닙니다: {pause_sum}")
+
+        # Accent 가중치 합 검증 (2개 모두 있을 때만)
+        if all([self.weight_pitch is not None,
+                self.weight_energy is not None]):
+            accent_sum = round(
+                self.weight_pitch +
+                self.weight_energy,
+                2
+            )
+            if abs(accent_sum - 1.0) > 0.01:
+                raise ValueError(f"Accent 가중치의 합이 1.0이 아닙니다: {accent_sum}")
+
+        # Intonation 가중치 합 검증 (2개 모두 있을 때만)
+        if all([self.weight_baseline is not None,
+                self.weight_iso is not None]):
+            intonation_sum = round(
+                self.weight_baseline +
+                self.weight_iso,
+                2
+            )
+            if abs(intonation_sum - 1.0) > 0.01:
+                raise ValueError(f"Intonation 가중치의 합이 1.0이 아닙니다: {intonation_sum}")
 
         return self
 
@@ -136,7 +140,7 @@ class WeightsConfig(BaseModel):
                 "weight_energy": 0.4,
                 "weight_baseline": 0.7,
                 "weight_iso": 0.3,
-                "deviation_threshold": 7.5,
+                "deviation_threshold": 5.0,
                 "gender": "F"
             }
         }
@@ -153,7 +157,7 @@ class EvaluationRequest(BaseModel):
     - script: 정답 스크립트 (사용자가 읽어야 할 텍스트)
     - language: 언어 코드 (ko-KR 또는 en-US)
     - callback_url: 결과를 받을 Spring Boot callback URL
-    - weights: 평가 가중치 설정 (Optional, 없으면 기본값 사용)
+    - weights: 평가 가중치 설정 (선택, 없으면 기본값 사용)
 
     ⚠️ Spring Boot는 camelCase를 사용하므로 alias 설정
     """
