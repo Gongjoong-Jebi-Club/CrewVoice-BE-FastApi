@@ -35,7 +35,14 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
     # 2. 생성된 requirements.txt를 사용하여 시스템에 의존성을 설치합니다.
     uv pip sync --system requirements.txt
 
-# 6. 애플리케이션 소스 코드 복사 (이 부분은 변경 없음)
+# 6. NLTK 데이터 다운로드 (품사 태거)
+# Accent Analyzer에서 내용어/기능어 구분을 위해 필요
+RUN python -c "import nltk; \
+    nltk.download('averaged_perceptron_tagger_eng', quiet=True); \
+    nltk.download('averaged_perceptron_tagger', quiet=True); \
+    print('NLTK 데이터 다운로드 완료')"
+
+# 7. 애플리케이션 소스 코드 복사 (이 부분은 변경 없음)
 COPY ./app ./app
 
 # 7. 서버 실행 포트 노출 (이 부분은 변경 없음)
