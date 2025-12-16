@@ -5,8 +5,8 @@ Azure Pronunciation Assessment를 사용하여 데이터 생성
 Pronunciation과 Pause 에이전트에서 재사용 가능
 
 검증 항목:
-- Completeness: 스크립트 단어를 얼마나 말했는가 (중복 포함, 90% 이상 필요)
-- Text Similarity: 스크립트와 얼마나 일치하는가 (WER 기반, 90% 이상 필요)
+- Completeness: 스크립트 단어를 얼마나 말했는가 (중복 포함, 70% 이상 필요)
+- Text Similarity: 스크립트와 얼마나 일치하는가 (WER 기반, 70% 이상 필요)
 - 발음 품질은 검증하지 않음 (Pronunciation 에이전트에서 별도 평가)
 
 Note:
@@ -35,8 +35,8 @@ class ValidateAnalyzer:
     """스크립트 검증 분석기"""
 
     # 검증 임계값 (내용 일치 여부만 검증, 발음은 Pronunciation 에이전트에서 평가)
-    COMPLETENESS_THRESHOLD = 70.0  # 완전성 임계값 (스크립트의 90% 이상 말해야 통과)
-    SIMILARITY_THRESHOLD = 0.7     # 텍스트 유사도 임계값 (90% 이상 일치해야 통과)
+    COMPLETENESS_THRESHOLD = 70.0  # 완전성 임계값 (스크립트의 70% 이상 말해야 통과)
+    SIMILARITY_THRESHOLD = 0.7     # 텍스트 유사도 임계값 (70% 이상 일치해야 통과)
 
     def __init__(self):
         # SPEECH_KEY 또는 AZURE_SPEECH_KEY 지원
@@ -398,7 +398,7 @@ class ValidateAnalyzer:
         """
         음성 내용 검증 실시 (발음은 검증하지 않음)
 
-        적합 조건: Completeness >= 90% AND Similarity >= 90%
+        적합 조건: Completeness >= 70% AND Similarity >= 70%
 
         Returns:
             검증 결과 딕셔너리 (is_valid, warnings, feedback)
