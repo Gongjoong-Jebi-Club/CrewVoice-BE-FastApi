@@ -391,22 +391,53 @@ class SpeechAnalysisManager:
 
     def get_agent_outputs(self, results: Dict[str, Any]) -> Dict[str, Any]:
         """
-        각 에이전트의 부가적인 output 추출
+        각 에이전트의 부가적인 output 추출 (필터링 적용)
 
-        각 에이전트가 실제로 반환하는 데이터를 기준으로 추출하여
-        comment_generator에 전달합니다.
+        각 에이전트가 실제로 반환하는 데이터를 기준으로 추출하되,
+        문제가 있는 부분만 선택적으로 추가하여 comment_generator에 전달합니다.
 
         Args:
             results: analyze_parallel 결과
 
         Returns:
-            에이전트별 주요 output 딕셔너리
+            에이전트별 주요 output 딕셔너리 (필터링된 상세 데이터 포함)
         """
         detailed_results = results.get("detailed_results", {})
 
         outputs: Dict[str, Any] = {}
 
-        # Accent
+        # Validate (검증 결과 요약)
+        if "validate" in detailed_results:
+            validate_data = detailed_results["validate"]
+            outputs["validate"] = {
+                "is_valid": validate_data.get("is_valid", True),
+                "accuracy_score": validate_data.get("accuracy_score", 0),
+                "fluency_score": validate_data.get("fluency_score", 0),
+                "completeness_score": validate_data.get("completeness_score", 0),
+                "pronunciation_score": validate_data.get("pronunciation_score", 0),
+                "text_similarity": validate_data.get("text_similarity", 0),
+            }
+
+            # 조건부 추가: 텍스트 불일치가 있는 경우
+            text_sim = validate_data.get("text_similarity", 100)
+            if text_sim < 100:
+                outputs["validate"]["text_difference"] = {
+                    "recognized": validate_data.get("recognized_text", ""),
+                    "reference": validate_data.get("reference_text", ""),
+                    "similarity": text_sim
+                }
+
+            # 조건부 추가: 완성도 문제
+            completeness = validate_data.get("completeness_score", 100)
+            if completeness < 95:
+                outputs["validate"]["completeness_issue"] = True
+
+            # 피드백 요약
+            feedback_list = validate_data.get("feedback", [])
+            if feedback_list:
+                outputs["validate"]["feedback_summary"] = feedback_list
+
+        # Accent (강조)
         if "accent" in detailed_results:
             accent_data = detailed_results["accent"]
             outputs["accent"] = {
@@ -415,7 +446,30 @@ class SpeechAnalysisManager:
                 "score_energy": accent_data.get("score_energy", 0)
             }
 
-        # Pronunciation
+            # 조건부 추가: 강조가 부족한 단어 (최대 5개)
+            accent_features = accent_data.get("features", [])
+            weak_words = []
+
+            for feat in accent_features:
+                word = feat.get("word", "")
+                features = feat.get("features", {})
+                pitch_st = features.get("pitch_st", 0)
+                energy_db = features.get("energy_db", -100)
+                is_voiced = features.get("is_voiced", False)
+
+                # 강조 부족 기준: pitch < 15 또는 energy < -70
+                if is_voiced and (pitch_st < 15 or energy_db < -70):
+                    weak_words.append({
+                        "word": word,
+                        "pitch": round(pitch_st, 1),
+                        "energy": round(energy_db, 1)
+                    })
+
+            # 최대 5개만 추가
+            if weak_words:
+                outputs["accent"]["weak_accent_words"] = weak_words[:5]
+
+        # Pronunciation (발음)
         if "pronunciation" in detailed_results:
             pron_data = detailed_results["pronunciation"]
             outputs["pronunciation"] = {
@@ -426,7 +480,18 @@ class SpeechAnalysisManager:
                 "recognized_text": pron_data.get("recognized_text", "")
             }
 
-        # Pause
+            # 조건부 추가: 발음 점수가 낮은 단어 (90점 미만)
+            word_details = pron_data.get("word_details", [])
+            low_score_words = [
+                {"word": w["word"], "score": w["accuracy_score"]}
+                for w in word_details
+                if w.get("accuracy_score", 100) < 90
+            ]
+
+            if low_score_words:
+                outputs["pronunciation"]["low_score_words"] = low_score_words
+
+        # Pause (휴지)
         if "pause" in detailed_results:
             pause_data = detailed_results["pause"]
             outputs["pause"] = {
@@ -439,7 +504,23 @@ class SpeechAnalysisManager:
                 "bad_pauses": pause_data.get("bad_pauses", 0)
             }
 
-        # Intonation
+            # 조건부 추가: 부적절한 pause (최대 5개)
+            pause_details = pause_data.get("pause_details", [])
+            bad_pause_details = [
+                {
+                    "after_word": p["after_word"],
+                    "pause_sec": p["pause_sec"],
+                    "context": p.get("context", "")
+                }
+                for p in pause_details
+                if not p.get("is_good", True)
+            ]
+
+            # 문제가 있을 때만 추가 (최대 5개)
+            if bad_pause_details:
+                outputs["pause"]["problem_pauses"] = bad_pause_details[:5]
+
+        # Intonation (억양)
         if "intonation" in detailed_results:
             inton_data = detailed_results["intonation"]
             # asr_metrics에서 recognized_text 추출 (transcript 대용)
@@ -453,7 +534,18 @@ class SpeechAnalysisManager:
                 "transcript": asr_metrics.get("recognized_text", "")  # asr_metrics에서 추출
             }
 
-        # Speed
+            # 선택적 추가: 음높이 통계
+            inton_features = inton_data.get("features", {})
+            if inton_features:
+                outputs["intonation"]["pitch_stats"] = {
+                    "f0_mean": round(inton_features.get("f0_mean", 0), 1),
+                    "f0_std": round(inton_features.get("f0_std", 0), 1),
+                    "f0_range": round(inton_features.get("f0_range", 0), 1),
+                    "rising_ratio": round(inton_features.get("rising_ratio", 0) * 100, 1),
+                    "falling_ratio": round(inton_features.get("falling_ratio", 0) * 100, 1)
+                }
+
+        # Speed (속도) - 현재 데이터로 충분
         if "speed" in detailed_results:
             speed_data = detailed_results["speed"]
             outputs["speed"] = {
@@ -464,7 +556,7 @@ class SpeechAnalysisManager:
                 "optimal_range": speed_data.get("optimal_range", "")
             }
 
-        # Tone
+        # Tone (톤) - 현재 데이터로 충분
         if "tone" in detailed_results:
             tone_data = detailed_results["tone"]
             axis_scores = tone_data.get("axis_scores", {}) or {}
