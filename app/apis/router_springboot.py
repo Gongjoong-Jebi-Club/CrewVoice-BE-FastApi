@@ -108,7 +108,7 @@ async def process_evaluation_async(request: EvaluationRequest):
     백그라운드에서 실행되는 평가 로직
 
     **타임아웃:**
-    - 전체 프로세스: 5분
+    - 전체 프로세스: 10분
     - S3 다운로드: 30초
     - 콜백 전송: 10초
 
@@ -129,7 +129,7 @@ async def process_evaluation_async(request: EvaluationRequest):
         tmp_path = await download_from_s3(request.audio_url, request.task_id, timeout=30)
         logger.info(f"[{request.task_id}] 다운로드 완료: {tmp_path}")
 
-        # 2. 음성 분석 실행 (5분 타임아웃)
+        # 2. 음성 분석 실행 (10분 타임아웃)
         logger.info(f"[{request.task_id}] 음성 분석 시작...")
 
         # 가중치 파라미터 추출 및 kwargs 구성
@@ -168,7 +168,7 @@ async def process_evaluation_async(request: EvaluationRequest):
                 wav_path=tmp_path,
                 **kwargs  # 가중치 파라미터 전달 (reference_text, language_code 포함)
             ),
-            timeout=300  # 5분
+            timeout=600  # 10분 (긴 오디오 대응)
         )
 
         logger.info(f"[{request.task_id}] 음성 분석 완료")
@@ -214,12 +214,12 @@ async def process_evaluation_async(request: EvaluationRequest):
 
     except asyncio.TimeoutError:
         # 타임아웃 발생
-        logger.error(f"[{request.task_id}] 평가 시간 초과 (5분)")
+        logger.error(f"[{request.task_id}] 평가 시간 초과 (10분)")
 
         failure_payload = CallbackFailurePayload(
             task_id=request.task_id,
             status="failed",
-            error_message="평가 시간 초과 (5분)"
+            error_message="평가 시간 초과 (10분)"
         )
 
         await send_callback(request.callback_url, failure_payload.model_dump(), request.task_id)
