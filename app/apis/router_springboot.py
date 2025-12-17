@@ -175,7 +175,6 @@ async def process_evaluation_async(request: EvaluationRequest):
 
         # 3. 점수 추출 (기존 코드 재사용)
         scores_dict = result.get("summary", {}).get("individual_scores", {})
-        overall_score = result.get("summary", {}).get("average_score", 0.0)
 
         # 4. AI 피드백 생성 (기존 코드 재사용)
         logger.info(f"[{request.task_id}] AI 피드백 생성 시작...")
@@ -198,8 +197,7 @@ async def process_evaluation_async(request: EvaluationRequest):
             score_intonation=round(scores_dict.get("intonation", 0.0), 2),
             score_tone=round(scores_dict.get("tone", 0.0), 2),
             score_speed=round(scores_dict.get("speed", 0.0), 2),
-            score_accent=round(scores_dict.get("accent", 0.0), 2),
-            overall_score=round(overall_score, 2)
+            score_accent=round(scores_dict.get("accent", 0.0), 2)
         )
 
         callback_payload = CallbackSuccessPayload(
@@ -209,7 +207,7 @@ async def process_evaluation_async(request: EvaluationRequest):
             feedback_summary=feedback_summary[:2000] # 글자 수 2000으로 제한
         )
 
-        logger.info(f"[{request.task_id}] 평가 완료 - overall_score: {overall_score:.2f}")
+        logger.info(f"[{request.task_id}] 평가 완료 - 6개 항목 점수 전송")
 
         # 6. 성공 콜백 전송
         await send_callback(request.callback_url, callback_payload.model_dump(), request.task_id)
