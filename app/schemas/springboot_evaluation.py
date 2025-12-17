@@ -224,7 +224,6 @@ class ScoresPayload(BaseModel):
     score_tone: float
     score_speed: float
     score_accent: float
-    overall_score: float
 
 
 class CallbackSuccessPayload(BaseModel):
@@ -249,8 +248,7 @@ class CallbackSuccessPayload(BaseModel):
                     "score_intonation": 78.50,
                     "score_tone": 82.00,
                     "score_speed": 88.00,
-                    "score_accent": 75.00,
-                    "overall_score": 83.17
+                    "score_accent": 75.00
                 },
                 "feedback_summary": "전반적으로 우수한 발음을 보였습니다. 억양 조절과 액센트 개선이 필요합니다."
             }
