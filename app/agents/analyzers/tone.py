@@ -52,16 +52,18 @@ class ToneAnalyzer:
 
         # 4) HNR (Harmonics-to-Noise Ratio) 근사치
         snd = parselmouth.Sound(y, sampling_frequency=sr)
-        harmonicity = snd.to_harmonicity()
-        hnr_values = []
+        # time_step=0.01: 10ms 간격으로 측정, 기본값 사용
+        harmonicity = snd.to_harmonicity(time_step=0.01, minimum_pitch=75.0)
 
-        for i in range(harmonicity.nx):
-            t = harmonicity.x1 + i * harmonicity.dx
-            hnr = harmonicity.get_value(t)
-            if not np.isnan(hnr) and not np.isinf(hnr):
-                hnr_values.append(hnr)
+        # harmonicity 객체의 values 속성을 직접 사용
+        hnr_array = harmonicity.values[0]  # 첫 번째 채널
 
-        hnr_like = float(np.mean(hnr_values)) if hnr_values else 0.0
+        # NaN, Inf, 그리고 비현실적인 값(-100dB 이하) 필터링
+        # parselmouth는 음성이 없는 구간에서 -200을 반환함
+        valid_mask = ~np.isnan(hnr_array) & ~np.isinf(hnr_array) & (hnr_array > -100)
+        hnr_values = hnr_array[valid_mask]
+
+        hnr_like = float(np.mean(hnr_values)) if len(hnr_values) > 0 else 0.0
 
         return {
             "f0_mean": f0_mean,
@@ -224,22 +226,30 @@ class ToneAnalyzer:
     ) -> float:
         """
         clarity ← hnr_like
-        - baseline보다 낮으면 탁하고 잡음이 많은 톤으로 간주 → 강한 감점
-        - baseline보다 충분히 높으면(좋은 HNR) → 만점 처리
+        - HNR은 높을수록 좋은 단방향 지표
+        - 절대값 기준으로 평가하되, baseline을 참고
+        - 10dB 이상: 양호, 15dB 이상: 우수, 20dB 이상: 최상
         """
         hnr_val = feats["hnr_like"]
         mean, std = self._get_feature_stats(lang_features, "hnr_like")
-        z = self._z_score(hnr_val, mean, std)
 
-        return self._lower_bounded_score(
-            z,
-            max_score=10.0,
-            min_score=0.0,
-            # z_full=1.0,    # z >= 1.0 (μ + 1σ 이상) → 만점
-            # z_zero=-2.0,   # z <= -2.0 (μ - 2σ 이하) → 0점
-            z_full=0.0,    # z >= 0.5 (μ + 0.5σ 이상) → 만점
-            z_zero=-2.0,   # z <= -2.0 (μ - 2σ 이하) → 0점
-        )
+        # 절대값 기준 평가
+        # 20dB 이상: 만점
+        # 10dB: 중간점 (5점)
+        # 5dB 이하: 0점
+        if hnr_val >= 20.0:
+            return 10.0
+        elif hnr_val >= 10.0:
+            # 10~20 사이: 선형 증가 (5점 → 10점)
+            ratio = (hnr_val - 10.0) / 10.0
+            return 5.0 + ratio * 5.0
+        elif hnr_val >= 5.0:
+            # 5~10 사이: 선형 증가 (0점 → 5점)
+            ratio = (hnr_val - 5.0) / 5.0
+            return ratio * 5.0
+        else:
+            # 5dB 이하: 0점
+            return 0.0
 
     def _stability_score(
         self,
@@ -255,13 +265,13 @@ class ToneAnalyzer:
         f0_std_val = feats["f0_std"]
         mean_f0_std, std_f0_std = self._get_feature_stats(lang_features, "f0_std")
         z_f0 = self._z_score(f0_std_val, mean_f0_std, std_f0_std)
-        f0_score = self._center_optimal_score(z_f0, max_score=10.0, z_zero=2.5)
+        f0_score = self._center_optimal_score(z_f0, max_score=10.0, z_zero=5.0, z_full=1.5)
 
         # volume variability
         rms_std_val = feats["rms_std"]
         mean_rms_std, std_rms_std = self._get_feature_stats(lang_features, "rms_std")
         z_rms = self._z_score(rms_std_val, mean_rms_std, std_rms_std)
-        rms_score = self._center_optimal_score(z_rms, max_score=10.0, z_zero=2.5)
+        rms_score = self._center_optimal_score(z_rms, max_score=10.0, z_zero=15.0, z_full=2.0)
 
         return (f0_score + rms_score) / 2.0
 
@@ -279,7 +289,7 @@ class ToneAnalyzer:
         spec_val = feats["spec_centroid_mean"]
         mean, std = self._get_feature_stats(lang_features, "spec_centroid_mean")
         z = self._z_score(spec_val, mean, std)
-        return self._center_optimal_score(z, max_score=10.0, z_zero=2.5)
+        return self._center_optimal_score(z, max_score=10.0, z_zero=3.0, z_full=0.5)
 
     def _pitch_position_score(
         self,
@@ -294,7 +304,7 @@ class ToneAnalyzer:
         f0_mean_val = feats["f0_mean"]
         mean, std = self._get_feature_stats(lang_features, "f0_mean")
         z = self._z_score(f0_mean_val, mean, std)
-        return self._center_optimal_score(z, max_score=10.0, z_zero=2.5)
+        return self._center_optimal_score(z, max_score=10.0, z_zero=3.0, z_full=0.5)
 
     def _compute_axis_scores(
         self,
@@ -411,3 +421,130 @@ class ToneAnalyzer:
             # "tone_score": tone_score,   # 0~10점 (추후 600점 환산은 상위 레이어에서)
             "score": round(normalized_score, 2),
         }
+
+
+if __name__ == "__main__":
+    """
+    Tone Analyzer 단독 테스트 블럭
+
+    사용법:
+        python app/agents/analyzers/tone.py
+
+    필요한 입력:
+        - 음성 파일 경로 (audio_file_path)
+        - 언어 코드 (language_code): ko-KR, en-US 등
+        - 성별 (gender): F, M
+        - baseline 파일 경로 (선택사항)
+        - 가중치 (선택사항)
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Tone Analyzer 단독 테스트")
+    parser.add_argument(
+        "--file",
+        type=str,
+        required=True,
+        help="분석할 음성 파일 경로 (예: /path/to/audio.wav)"
+    )
+    parser.add_argument(
+        "--language",
+        type=str,
+        default="ko-KR",
+        help="언어 코드 (기본값: ko-KR, 선택: en-US)"
+    )
+    parser.add_argument(
+        "--gender",
+        type=str,
+        default="F",
+        choices=["F", "M"],
+        help="성별 (기본값: F, 선택: M)"
+    )
+    parser.add_argument(
+        "--baseline",
+        type=str,
+        default=None,
+        help="Baseline JSON 파일 경로 (기본값: app/agents/baselines/tone_default.json)"
+    )
+    parser.add_argument(
+        "--weight-clarity",
+        type=float,
+        default=0.4,
+        help="명료도 가중치 (기본값: 0.4)"
+    )
+    parser.add_argument(
+        "--weight-stability",
+        type=float,
+        default=0.3,
+        help="안정성 가중치 (기본값: 0.3)"
+    )
+    parser.add_argument(
+        "--weight-brightness",
+        type=float,
+        default=0.2,
+        help="밝기 가중치 (기본값: 0.2)"
+    )
+    parser.add_argument(
+        "--weight-pitch-position",
+        type=float,
+        default=0.1,
+        help="음높이 위치 가중치 (기본값: 0.1)"
+    )
+
+    args = parser.parse_args()
+
+    # Baseline 경로 설정
+    baseline_path = Path(args.baseline) if args.baseline else DEFAULT_TONE_BASELINE_PATH
+
+    # 입력 정보 출력
+    print("="*80)
+    print("Tone Analyzer 단독 테스트 시작")
+    print("="*80)
+    print(f"음성 파일: {args.file}")
+    print(f"언어 코드: {args.language}")
+    print(f"성별: {args.gender}")
+    print(f"Baseline 파일: {baseline_path}")
+    print(f"가중치 - 명료도: {args.weight_clarity}, 안정성: {args.weight_stability}, "
+          f"밝기: {args.weight_brightness}, 음높이: {args.weight_pitch_position}")
+    print("="*80)
+
+    # ToneAnalyzer 초기화 및 분석
+    try:
+        analyzer = ToneAnalyzer()
+        result = analyzer.analyze(
+            file_path=args.file,
+            language_code=args.language,
+            gender=args.gender,
+            baseline_path=baseline_path,
+            weight_clarity=args.weight_clarity,
+            weight_stability=args.weight_stability,
+            weight_brightness=args.weight_brightness,
+            weight_pitch_position=args.weight_pitch_position
+        )
+
+        # 결과 출력
+        print("\n[분석 결과]")
+        print(f"Agent: {result['agent']}")
+        print(f"최종 점수: {result['score']}/100")
+        print("\n[추출된 특징 (Features)]")
+        for key, value in result['features'].items():
+            print(f"  {key}: {value:.4f}")
+        print("\n[축 점수 (Axis Scores)]")
+        for key, value in result['axis_scores'].items():
+            print(f"  {key}: {value:.2f}/10")
+        print("\n[전체 결과 (JSON)]")
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        print("="*80)
+        print("분석 완료!")
+        print("="*80)
+
+    except FileNotFoundError as e:
+        print(f"\n[오류] 파일을 찾을 수 없습니다: {e}")
+        sys.exit(1)
+    except ValueError as e:
+        print(f"\n[오류] 잘못된 입력값: {e}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"\n[오류] 예상치 못한 오류 발생: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
