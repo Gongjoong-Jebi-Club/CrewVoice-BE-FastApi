@@ -286,17 +286,17 @@ class AICommentGenerator:
                 reason_text = "\n".join(f"• {reason}" for reason in reason_parts) if reason_parts else "• 검증 기준을 충족하지 못했습니다."
 
                 return {
-                    "comment": f"""## 🚫 분석 부적합
+                    "comment": f"""🚫 분석 부적합
 
-스크립트 정확도가 낮아 **부적합**으로 판정되었습니다.
+스크립트 정확도가 낮아 부적합으로 판정되었습니다.
 
-### 부적합 사유
+▶ 부적합 사유
 {reason_text}
 
-### 검증 결과
+▶ 검증 결과
 {feedback_text}
 
-### 권장 사항
+▶ 권장 사항
 1. 스크립트 내용을 정확하게 읽어주세요.
 2. 배경 소음이 없는 조용한 환경에서 녹음해주세요.
 3. 명확한 발음으로 천천히 말씀해주세요.
@@ -323,14 +323,14 @@ class AICommentGenerator:
                 missing_list = ", ".join(missing_names.get(agent, agent) for agent in missing_agents)
 
                 return {
-                    "comment": f"""## ⚠️ 분석 불완전
+                    "comment": f"""⚠️ 분석 불완전
 
 일부 분석이 실패하여 완전한 피드백을 제공할 수 없습니다.
 
-### 실패한 분석
+▶ 실패한 분석
 • {missing_list}
 
-### 성공한 분석
+▶ 성공한 분석
 • {", ".join(missing_names.get(agent, agent) for agent in available_agents)}
 
 다시 시도하거나 시스템 관리자에게 문의해주세요.
