@@ -110,7 +110,7 @@ async def process_evaluation_async(request: EvaluationRequest):
     **타임아웃:**
     - 전체 프로세스: 10분
     - S3 다운로드: 30초
-    - 콜백 전송: 10초
+    - 콜백 전송: 30초
 
     **에러 처리:**
     - 모든 에러는 자동으로 콜백 전송
@@ -461,7 +461,7 @@ async def send_callback(callback_url: str, payload: dict, task_id: str):
         task_id: 작업 ID (로깅용)
 
     Note:
-        - 타임아웃: 10초
+        - 타임아웃: 30초
         - 재시도: 없음 (한 번만 전송)
         - 실패 시: 로그만 기록
         - 인증: X-API-Key 헤더 포함
@@ -475,7 +475,7 @@ async def send_callback(callback_url: str, payload: dict, task_id: str):
         "X-API-Key": api_key
     }
 
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=30) as client:
         try:
             logger.info(f"[{task_id}] 콜백 전송 시작: {callback_url}")
 
@@ -489,8 +489,8 @@ async def send_callback(callback_url: str, payload: dict, task_id: str):
             logger.error(f"[{task_id}] 콜백 전송 실패 (HTTP {e.response.status_code}): {e.response.text}")
 
         except httpx.TimeoutException:
-            # 타임아웃 (10초)
-            logger.error(f"[{task_id}] 콜백 전송 타임아웃 (10초 초과)")
+            # 타임아웃 (30초)
+            logger.error(f"[{task_id}] 콜백 전송 타임아웃 (30초 초과)")
 
         except Exception as e:
             # 기타 오류
