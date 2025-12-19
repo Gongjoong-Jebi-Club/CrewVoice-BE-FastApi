@@ -14,7 +14,22 @@ router = APIRouter()
 analyzer_manager = SpeechAnalysisManager()
 comment_generator = AICommentGenerator()
 
-@router.post("/evaluate", response_model=EvaluationResponse)
+@router.post("/evaluate",
+    response_model=EvaluationResponse,
+    summary="음성 평가 API (즉시 응답)",
+    description="""
+    클라이언트가 직접 호출하는 음성 평가 API입니다.
+
+    **특징**:
+    - 음성 파일 업로드 → 분석 → 즉시 결과 반환 (동기 처리)
+    - Spring Boot 없이 독립적으로 사용 가능
+    - 프론트엔드 직접 호출, 외부 API 연동에 적합
+
+    **반환 데이터**:
+    - 6가지 평가 지표 점수 (발음, 휴지, 억양, 톤, 속도, 강조)
+    - AI 생성 피드백
+    """
+)
 async def evaluate_speech(
     audio_file: UploadFile,
     script_id: int = Form(...),
@@ -23,7 +38,8 @@ async def evaluate_speech(
     background_tasks: BackgroundTasks = None
 ):
     """
-    음성 파일을 분석하여 6가지 지표 점수와 피드백을 반환합니다.
+    음성 파일을 분석하여 6가지 지표 점수와 피드백을 즉시 반환합니다.
+    (Spring Boot 없이 독립적으로 동작하는 직접 호출용 API)
     """
     
     # 1. 파일 유효성 검사

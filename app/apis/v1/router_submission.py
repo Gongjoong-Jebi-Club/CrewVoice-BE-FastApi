@@ -27,10 +27,6 @@ router = APIRouter()
     description="""
     음성 분석 로직을 테스트하기 위한 독립적인 API입니다.
     (Spring Boot와 연동 없이 독립적으로 동작)
-
-    - 파일은 즉시 저장되고, 응답이 반환됩니다
-    - AI 분석(STT, 발음 평가 등)은 백그라운드에서 비동기로 처리됩니다
-    - 분석 결과는 별도의 조회 API를 통해 확인할 수 있습니다
     """
 )
 async def submit_voice_evaluation(
@@ -48,21 +44,6 @@ async def submit_voice_evaluation(
 ) -> SubmissionResponse:
     """
     음성 파일 제출 및 분석 요청
-
-    **처리 흐름:**
-    1. 파일 유효성 검증 (MIME 타입, 확장자)
-    2. 파일을 로컬 temp/ 디렉토리에 저장
-    3. DB에 제출 기록 생성 (submission_id 발급)
-    4. 백그라운드 작업으로 AI 분석 등록
-    5. 즉시 응답 반환 (submission_id 포함)
-
-    **백그라운드 작업:**
-    - STT (Speech-to-Text)
-    - 발음 평가 (Pronunciation)
-    - 억양 분석 (Intonation)
-    - 속도 분석 (Speed)
-    - 감정/톤 분석 (Tone)
-    - 종합 피드백 생성 및 DB 저장
     """
 
     # TODO: Authorization 헤더 검증 (JWT 토큰)

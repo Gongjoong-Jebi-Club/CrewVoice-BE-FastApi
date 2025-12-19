@@ -228,6 +228,10 @@ API 문서 확인:
 
 ## 📡 API 엔드포인트
 
+CrewVoice API는 **2개의 프로덕션 API**와 **1개의 테스트 API**를 제공합니다.
+
+---
+
 ### 🔍 Health Check
 
 ```http
@@ -243,76 +247,11 @@ GET /health
 
 ---
 
-### 🎤 음성 평가 API (즉시 응답)
+## 🚀 프로덕션 API
 
-```http
-POST /api/v1/evaluate
-Content-Type: multipart/form-data
-```
+### 1️⃣ Spring Boot 연동 API (콜백 방식)
 
-**요청 본문**:
-```
-audio_file: (파일) WAV, MP3, M4A 형식
-script_id: (int) 스크립트 ID
-user_id: (str) 사용자 ID
-reference_text: (str) 참조 텍스트 (스크립트)
-language_code: (str) 언어 코드 (ko-KR 또는 en-US)
-```
-
-**응답**:
-```json
-{
-  "score_pronunciation": 85.0,
-  "score_pause": 80.5,
-  "score_intonation": 82.0,
-  "score_tone": 78.5,
-  "score_speed": 88.0,
-  "score_accent": 81.0,
-  "feedback_summary": "전반적으로 우수한 발음을 보였습니다. 억양 조절과 액센트 개선이 필요합니다.",
-  "eval_id": "eval-user123-script1"
-}
-```
-
----
-
-### 🧪 음성 분석 테스트 API (독립 실행)
-
-> **참고**: 이 API는 Spring Boot와 연동 없이 음성 분석 로직을 테스트하기 위한 독립적인 엔드포인트입니다.
-
-```http
-POST /api/v1/analysis/submit/test
-Content-Type: multipart/form-data
-```
-
-**요청 본문**:
-```
-file: (파일) 음성 파일
-user_id: (int) 사용자 ID
-evaluation_id: (int) 평가 세션 ID
-step: (str) 평가 단계 (STEP2, STEP3 등)
-question_index: (int) 문제 번호
-language: (str) 언어 (kor 또는 eng)
-```
-
-**응답** (즉시):
-```json
-{
-  "code": 200,
-  "message": "제출 성공",
-  "data": {
-    "submission_id": 105
-  }
-}
-```
-
-**특징**:
-- Spring Boot 콜백 없이 독립적으로 동작
-- 음성 분석 로직 테스트 및 디버깅용
-- 백그라운드에서 비동기로 분석 처리
-
----
-
-### 🔗 Spring Boot 연동 API (콜백 방식)
+> **주요 용도**: 마이크로서비스 아키텍처 - Spring Boot 백엔드와 비동기 통신
 
 ```http
 POST /api/evaluate
@@ -344,7 +283,7 @@ Content-Type: application/json
 }
 ```
 
-**콜백 (완료 후)**:
+**콜백** (완료 후, Spring Boot callbackUrl로 전송):
 ```json
 {
   "task_id": "550e8400-e29b-41d4-a716-446655440000",
@@ -360,6 +299,96 @@ Content-Type: application/json
   "feedback_summary": "전반적으로 우수한 발음을 보였습니다..."
 }
 ```
+
+**특징**:
+- ✅ **비동기 처리**: 요청 즉시 응답, 백그라운드 분석
+- ✅ **콜백 통신**: 완료 후 Spring Boot로 결과 자동 전송
+- ✅ **S3 통합**: Pre-signed URL을 통한 파일 다운로드
+- ✅ **커스텀 가중치**: 평가 항목별 가중치 조절 가능
+- ✅ **타임아웃**: 전체 10분, S3 30초, 콜백 30초
+
+---
+
+### 2️⃣ 직접 호출 API (즉시 응답)
+
+> **주요 용도**: 클라이언트 직접 호출 - 프론트엔드, 외부 API 연동
+
+```http
+POST /api/v1/evaluate
+Content-Type: multipart/form-data
+```
+
+**요청 본문**:
+```
+audio_file: (파일) WAV, MP3, M4A 형식
+script_id: (int) 스크립트 ID
+user_id: (str) 사용자 ID
+reference_text: (str) 참조 텍스트 (스크립트)
+language_code: (str) 언어 코드 (ko-KR 또는 en-US)
+```
+
+**응답** (즉시 반환):
+```json
+{
+  "score_pronunciation": 85.0,
+  "score_pause": 80.5,
+  "score_intonation": 82.0,
+  "score_tone": 78.5,
+  "score_speed": 88.0,
+  "score_accent": 81.0,
+  "feedback_summary": "전반적으로 우수한 발음을 보였습니다. 억양 조절과 액센트 개선이 필요합니다.",
+  "eval_id": "eval-user123-script1"
+}
+```
+
+**특징**:
+- ✅ **동기 처리**: 분석 완료 후 즉시 결과 반환
+- ✅ **독립 실행**: Spring Boot 없이 사용 가능
+- ✅ **간단한 연동**: 파일 업로드 → 결과 수신
+- ✅ **직접 호출**: 프론트엔드, 모바일 앱, 외부 시스템에서 바로 호출
+
+---
+
+## 🧪 테스트 API
+
+### 3️⃣ 음성 분석 테스트 API
+
+> **주요 용도**: 음성 분석 로직 테스트 및 디버깅 (개발 환경 전용)
+
+```http
+POST /api/v1/analysis/submit/test
+Content-Type: multipart/form-data
+```
+
+**특징**:
+- ✅ **독립 실행**: Spring Boot 없이 단독 테스트 가능
+- ✅ **백그라운드 처리**: 파일 저장 후 즉시 응답, 분석은 백그라운드에서 실행
+- ✅ **개발/디버깅**: 음성 분석 로직 검증 및 디버깅용
+
+**요청 파라미터**:
+```
+file: UploadFile              // 음성 파일 (.webm, .wav 등)
+user_id: int                  // 사용자 ID
+evaluation_id: int            // 평가 세션 ID
+step: str                     // 평가 단계 (예: STEP2, STEP3)
+question_index: int           // 문제 번호 (0부터 시작)
+language: str                 // 언어 코드 (kor 또는 eng)
+```
+
+**응답** (즉시):
+```json
+{
+  "code": 200,
+  "message": "제출 성공",
+  "data": {
+    "submission_id": 105
+  }
+}
+```
+
+**참고**:
+- 분석 결과는 백그라운드에서 처리되며, 별도의 조회 API가 필요합니다 (현재 미구현)
+- 프로덕션 환경에서는 사용하지 마세요
 
 ---
 

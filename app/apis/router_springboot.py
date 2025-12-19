@@ -47,21 +47,28 @@ if DEBUG_SAVE_AUDIO:
     "/evaluate",
     response_model=EvaluationAcceptedResponse,
     status_code=status.HTTP_200_OK,
-    summary="Spring Boot 음성 평가 요청 (비동기)",
+    summary="Spring Boot 연동 API (콜백 방식)",
     description="""
-    Spring Boot로부터 평가 요청을 받아 백그라운드 처리
+    Spring Boot 백엔드와 비동기 콜백 방식으로 통신하는 프로덕션 API입니다.
 
-    **처리 흐름:**
-    1. 요청 검증 및 즉시 200 OK 응답 반환
-    2. 백그라운드 작업 등록:
-       - S3에서 WAV 다운로드
-       - 음성 분석 실행 (6가지 지표)
+    **특징**:
+    - 마이크로서비스 아키텍처 전용 (Spring Boot ↔ FastAPI)
+    - 요청 즉시 200 OK 반환 → 백그라운드 처리 → 완료 후 콜백 전송
+    - S3 Pre-signed URL을 통한 파일 다운로드
+    - 커스텀 가중치 설정 지원 (Weights 파라미터)
+
+    **처리 흐름**:
+    1. Spring Boot로부터 요청 수신 (taskId, audioUrl, script, callbackUrl 등)
+    2. 즉시 200 OK 응답 반환
+    3. 백그라운드 작업:
+       - S3에서 오디오 다운로드
+       - 7가지 에이전트 음성 분석 (검증 + 6가지 평가)
        - AI 피드백 생성
-       - Spring Boot 콜백 전송
+    4. 완료 후 Spring Boot callbackUrl로 결과 전송
 
-    **Spring Boot 명세:**
-    - 응답: HTTP 200 OK (202 아님!)
-    - 처리 방식: Fire-and-Forget
+    **Spring Boot 명세**:
+    - 응답: HTTP 200 OK (Fire-and-Forget)
+    - 타임아웃: 전체 10분, S3 30초, 콜백 30초
     """
 )
 async def springboot_evaluate(
