@@ -356,7 +356,7 @@ language_code: (str) 언어 코드 (ko-KR 또는 en-US)
 > **주요 용도**: 음성 분석 로직 테스트 및 디버깅 (개발 환경 전용)
 
 ```http
-POST /api/v1/analysis/submit/test
+POST /api/v1/analysis/submit
 Content-Type: multipart/form-data
 ```
 

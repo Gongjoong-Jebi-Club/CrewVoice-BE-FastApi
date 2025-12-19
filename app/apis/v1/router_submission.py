@@ -17,13 +17,13 @@ router = APIRouter()
 
 
 @router.post(
-    "/analysis/submit/test",
+    "/analysis/submit",
     response_model=SubmissionResponse,
     responses={
         400: {"model": ErrorResponse, "description": "파일 형식 오류"},
         500: {"model": ErrorResponse, "description": "서버 내부 오류"}
     },
-    summary="음성 평가 제출 (테스트용)",
+    summary="음성 평가 제출",
     description="""
     음성 분석 로직을 테스트하기 위한 독립적인 API입니다.
     (Spring Boot와 연동 없이 독립적으로 동작)
