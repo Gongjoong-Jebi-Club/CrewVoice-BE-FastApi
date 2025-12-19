@@ -17,15 +17,16 @@ router = APIRouter()
 
 
 @router.post(
-    "/analysis/submit",
+    "/analysis/submit/test",
     response_model=SubmissionResponse,
     responses={
         400: {"model": ErrorResponse, "description": "파일 형식 오류"},
         500: {"model": ErrorResponse, "description": "서버 내부 오류"}
     },
-    summary="음성 평가 제출",
+    summary="음성 평가 제출 (테스트용)",
     description="""
-    사용자가 녹음한 음성 파일을 제출하고 AI 분석을 요청합니다.
+    음성 분석 로직을 테스트하기 위한 독립적인 API입니다.
+    (Spring Boot와 연동 없이 독립적으로 동작)
 
     - 파일은 즉시 저장되고, 응답이 반환됩니다
     - AI 분석(STT, 발음 평가 등)은 백그라운드에서 비동기로 처리됩니다
